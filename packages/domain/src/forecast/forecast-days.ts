@@ -1,13 +1,10 @@
+import { contractCoverage, validateContracts, type Contract } from "../contracts.ts";
 import { formatDate, parseDate, weekday } from "../date.ts";
 import { weekdayAverages, type DailyWork } from "./weekday-average.ts";
 
 export interface ForecastProject {
   readonly projectId: string;
   readonly clientId: string;
-  readonly contract: {
-    readonly start: string;
-    readonly end: string | null;
-  };
   readonly history: readonly DailyWork[];
 }
 
@@ -16,6 +13,7 @@ export interface ForecastInput {
   readonly until: string;
   readonly weeks: number;
   readonly projects: readonly ForecastProject[];
+  readonly contracts: readonly Contract[];
   readonly absenceSeconds: Readonly<Record<string, number>>;
 }
 
@@ -24,6 +22,7 @@ export interface ForecastRow {
   readonly projectId: string;
   readonly seconds: number;
   readonly source: "project" | "client" | "capacity";
+  readonly assumesRenewal: boolean;
 }
 
 function addWork(totals: Map<string, number>, work: DailyWork): void {
@@ -38,14 +37,15 @@ function dailyWork(totals: ReadonlyMap<string, number>): DailyWork[] {
   return Array.from(totals, ([date, seconds]) => ({ date, seconds }));
 }
 
-/** 翌日から until まで、契約期間内の案件に実績・空き・不在を反映した予測を作る。 */
+/** 翌日から until まで、契約と更新見込み・実績・空き・不在を反映した予測を作る。 */
 export function forecastDays(input: ForecastInput): readonly ForecastRow[] {
-  const { asOf, until, weeks, projects, absenceSeconds } = input;
+  const { asOf, until, weeks, projects, contracts, absenceSeconds } = input;
   const start = parseDate(asOf, "asOf");
   const end = parseDate(until, "until");
   if (end < start) {
     throw new RangeError("until must not be before asOf");
   }
+  validateContracts(contracts);
   for (const [date, seconds] of Object.entries(absenceSeconds)) {
     parseDate(date, "absenceSeconds date");
     if (!Number.isSafeInteger(seconds) || seconds < 0) {
@@ -62,25 +62,17 @@ export function forecastDays(input: ForecastInput): readonly ForecastRow[] {
       throw new RangeError("projectId must be unique");
     }
     projectIds.add(project.projectId);
-    const contractStart = parseDate(project.contract.start, "contract.start");
-    const contractEnd = project.contract.end === null
-      ? null
-      : parseDate(project.contract.end, "contract.end");
-    if (contractEnd !== null && contractEnd < contractStart) {
-      throw new RangeError("contract.end must not be before contract.start");
-    }
-
     const averages = weekdayAverages(project.history, options);
     const clientTotals = clientWork.get(project.clientId) ?? new Map<string, number>();
     clientWork.set(project.clientId, clientTotals);
     // 終了済みの案件も集計する。今日以降の記録は予測のもとにしない。
     for (const work of project.history) {
-      if (work.date < asOf) {
+      if (work.seconds > 0 && work.date < asOf) {
         addWork(allWork, work);
         addWork(clientTotals, work);
       }
     }
-    return { project, contractStart, contractEnd, averages };
+    return { project, averages };
   });
   const allAverages = weekdayAverages(dailyWork(allWork), options);
   const clientAverages = new Map(
@@ -89,29 +81,53 @@ export function forecastDays(input: ForecastInput): readonly ForecastRow[] {
       weekdayAverages(dailyWork(totals), options),
     ] as const),
   );
-  const forecasts = projectForecasts.map((forecast) => ({
-    ...forecast,
-    averages: forecast.averages ?? clientAverages.get(forecast.project.clientId) ?? null,
-    source: forecast.averages === null ? "client" as const : "project" as const,
-  }));
+  const forecasts = projectForecasts.map((forecast) => {
+    const averages = forecast.averages ?? clientAverages.get(forecast.project.clientId) ?? null;
+    const source = forecast.averages !== null
+      ? "project" as const
+      : averages !== null ? "client" as const : "capacity" as const;
+    return { ...forecast, averages, source };
+  });
 
   const rows: ForecastRow[] = [];
   for (let day = start + 1; day <= end; day += 1) {
     const date = formatDate(day);
     const index = weekday(day);
-    const active = forecasts.filter(({ contractStart, contractEnd }) =>
-      day >= contractStart && (contractEnd === null || day <= contractEnd),
-    );
-    const knownSeconds = active.reduce(
-      (sum, { averages }) => sum + (averages?.[index] ?? 0),
-      0,
-    );
-    const capacityCount = active.filter(({ averages }) => averages === null).length;
+    const active = forecasts.flatMap((forecast) => {
+      const coverage = contractCoverage(contracts, forecast.project.projectId, date);
+      return coverage === null ? [] : [{ ...forecast, assumesRenewal: coverage.assumesRenewal }];
+    });
+
+    const projectSecondsByClient = new Map<string, number>();
+    const clientCounts = new Map<string, number>();
+    for (const { project, averages, source } of active) {
+      if (source === "project") {
+        projectSecondsByClient.set(
+          project.clientId,
+          (projectSecondsByClient.get(project.clientId) ?? 0) + (averages?.[index] ?? 0),
+        );
+      } else if (source === "client") {
+        clientCounts.set(project.clientId, (clientCounts.get(project.clientId) ?? 0) + 1);
+      }
+    }
+    // 取引先の実績から案件自身の予測を引き、残りをその取引先の新規案件で等分する。
+    const allocated = active.map((forecast) => {
+      const { project, averages, source } = forecast;
+      const seconds = source === "capacity"
+        ? null
+        : source === "project" ? averages?.[index] ?? 0
+        : Math.max(0, (averages?.[index] ?? 0) - (projectSecondsByClient.get(project.clientId) ?? 0)) /
+          (clientCounts.get(project.clientId) ?? 1);
+      return { ...forecast, seconds };
+    });
+    const knownSeconds = allocated.reduce((sum, { seconds }) => sum + (seconds ?? 0), 0);
+    const capacityCount = allocated.filter(({ source }) => source === "capacity").length;
     const capacitySeconds = allAverages === null || capacityCount === 0
       ? null
       : Math.max(0, (allAverages[index] ?? 0) - knownSeconds) / capacityCount;
-    const dailyRows = active.flatMap<ForecastRow>(({ project, averages, source }) => {
-      const seconds = averages === null ? capacitySeconds : averages[index] ?? 0;
+    const dailyRows = allocated.flatMap<ForecastRow>((forecast) => {
+      const { project, source, assumesRenewal } = forecast;
+      const seconds = forecast.seconds ?? capacitySeconds;
       if (seconds === null) {
         return [];
       }
@@ -119,7 +135,8 @@ export function forecastDays(input: ForecastInput): readonly ForecastRow[] {
         date,
         projectId: project.projectId,
         seconds,
-        source: averages === null ? "capacity" : source,
+        source,
+        assumesRenewal,
       }];
     });
 

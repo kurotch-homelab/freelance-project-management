@@ -1,4 +1,6 @@
 const MILLISECONDS_PER_DAY = 86_400_000;
+const MIN_DAY = parseDate("0000-01-01", "minimum date");
+const MAX_DAY = parseDate("9999-12-31", "maximum date");
 
 /** YYYY-MM-DD を検証し、UTC の 1970-01-01 からの日数に変換する。 */
 export function parseDate(value: string, name: string): number {
@@ -24,12 +26,20 @@ export function parseDate(value: string, name: string): number {
   return date.getTime() / MILLISECONDS_PER_DAY;
 }
 
+function assertDay(day: number): void {
+  if (!Number.isSafeInteger(day) || day < MIN_DAY || day > MAX_DAY) {
+    throw new RangeError("day must be an integer within 0000-01-01 through 9999-12-31");
+  }
+}
+
 /** UTC の 1970-01-01 からの日数を YYYY-MM-DD に戻す。 */
 export function formatDate(day: number): string {
+  assertDay(day);
   return new Date(day * MILLISECONDS_PER_DAY).toISOString().slice(0, 10);
 }
 
 /** UTC の日数に対応する曜日を返す(0 = 日曜)。 */
 export function weekday(day: number): number {
+  assertDay(day);
   return (((day + 4) % 7) + 7) % 7;
 }

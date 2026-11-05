@@ -7,7 +7,7 @@ export interface DailyWork {
 
 /**
  * 今日を含まない直近 weeks 週の曜日別平均を、日曜から土曜の 7 要素で返す。
- * 今日より前の記録がなければ null。平均の端数は丸めない。
+ * 今日より前の正の稼働記録がなければ null。平均の端数は丸めない。
  */
 export function weekdayAverages(
   work: readonly DailyWork[],
@@ -26,7 +26,7 @@ export function weekdayAverages(
     if (!Number.isSafeInteger(seconds) || seconds < 0) {
       throw new RangeError("work.seconds must be a non-negative safe integer");
     }
-    if (day >= end) {
+    if (seconds === 0 || day >= end) {
       continue;
     }
     firstDay = firstDay === null ? day : Math.min(firstDay, day);
