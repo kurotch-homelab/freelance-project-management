@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { effectiveHoursRange, validateContracts, type Contract, type HoursRange } from "@fpm/domain";
+import { effectiveHoursRange, validateContracts, validatePaymentTerms, type Contract, type HoursRange } from "@fpm/domain";
 import type { Selectable } from "kysely";
 import type { Database } from "./database.ts";
 import type { ClientsTable, ProjectsTable, StoredInteger } from "./schema.ts";
@@ -138,6 +138,7 @@ async function readContracts(db: Database, filter: ClientFilter = {}): Promise<C
 export function createRepository(db: Database): Repository {
   return {
     async saveClient(client) {
+      validatePaymentTerms(client.paymentTerms);
       const row = {
         id: client.id, name: client.name,
         closing_day: String(client.paymentTerms.closingDay),
@@ -161,7 +162,22 @@ export function createRepository(db: Database): Repository {
         id: project.id, client_id: project.clientId, name: project.name, status: project.status,
         solidtime_project_id: project.solidtimeProjectId, drive_folder_id: project.driveFolderId,
       };
-      await db.insertInto("projects").values(row).onConflict((c) => c.column("id").doUpdateSet(row)).execute();
+      await db.transaction().execute(async (tx) => {
+        // Use the same client lock as saveContract before checking membership.
+        await tx.updateTable("clients").set((eb) => ({ id: eb.ref("id") }))
+          .where("id", "in", tx.selectFrom("projects").select("client_id").where("id", "=", project.id))
+          .execute();
+        const saved = await tx.selectFrom("projects").select("client_id")
+          .where("id", "=", project.id).executeTakeFirst();
+        if (saved !== undefined && saved.client_id !== project.clientId) {
+          const membership = await tx.selectFrom("contract_projects").select("contract_id")
+            .where("project_id", "=", project.id).executeTakeFirst();
+          if (membership !== undefined) {
+            throw new RangeError("Cannot change the client of a project that belongs to a contract");
+          }
+        }
+        await tx.insertInto("projects").values(row).onConflict((c) => c.column("id").doUpdateSet(row)).execute();
+      });
     },
     async listProjects(filter = {}) {
       let query = db.selectFrom("projects").selectAll();
@@ -210,13 +226,17 @@ export function createRepository(db: Database): Repository {
       });
     },
     async saveHoursRangeOverride(override) {
-      effectiveHoursRange({}, [override], override.month);
-      const row = {
-        id: JSON.stringify([override.contractId, override.projectId, override.month]),
-        contract_id: override.contractId, project_id: override.projectId, month: override.month,
-        ...rangeColumns(override.range), note: override.note, recorded_at: new Date().toISOString(),
-      };
       await db.transaction().execute(async (tx) => {
+        effectiveHoursRange({}, [override], override.month);
+        const row = {
+          id: JSON.stringify([override.contractId, override.projectId, override.month]),
+          contract_id: override.contractId, project_id: override.projectId, month: override.month,
+          ...rangeColumns(override.range), note: override.note, recorded_at: new Date().toISOString(),
+        };
+        // Serialize membership checks with saveContract, which may remove projects.
+        await tx.updateTable("clients").set((eb) => ({ id: eb.ref("id") }))
+          .where("id", "in", tx.selectFrom("contracts").select("client_id").where("id", "=", override.contractId))
+          .execute();
         if (override.projectId !== null) {
           const project = await tx.selectFrom("contract_projects").select("project_id")
             .where("contract_id", "=", override.contractId).where("project_id", "=", override.projectId).executeTakeFirst();

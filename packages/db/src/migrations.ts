@@ -109,7 +109,14 @@ const provider: MigrationProvider = {
   },
 };
 
-export async function migrateToLatest(db: Database): Promise<void> {
-  const { error } = await new Migrator({ db, provider }).migrateToLatest();
-  if (error !== undefined) throw error;
+/** migrationProvider は失敗時のロールバック検証に使う内部用の差し替え口。 */
+export async function migrateToLatest(db: Database, migrationProvider: MigrationProvider = provider): Promise<void> {
+  const migrator = new Migrator({ db, provider: migrationProvider });
+  // Commit each migration and its history entry together. Earlier successful
+  // migrations remain applied if a later one fails, on both SQLite and PostgreSQL.
+  while (true) {
+    const { error, results } = await migrator.migrateUp();
+    if (error !== undefined) throw error;
+    if (results?.length === 0) return;
+  }
 }

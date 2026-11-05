@@ -94,6 +94,16 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
     it("ないときは null", async () => {
       await expect(repo.getClient("nope")).resolves.toBeNull();
     });
+
+    it.each([
+      { closingDay: 0, paymentMonthOffset: 1, paymentDay: "end" },
+      { closingDay: 1.5, paymentMonthOffset: 1, paymentDay: "end" },
+      { closingDay: "end", paymentMonthOffset: -1, paymentDay: "end" },
+      { closingDay: "end", paymentMonthOffset: 1, paymentDay: 32 },
+    ] as const)("不正な支払条件 %o は保存しない", async (paymentTerms) => {
+      await expect(repo.saveClient({ ...clientA, paymentTerms })).rejects.toThrow(RangeError);
+      await expect(repo.getClient("client-a")).resolves.toBeNull();
+    });
   });
 
   describe("案件", () => {
@@ -113,6 +123,21 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
       await repo.saveProject(projectX);
       await expect(repo.findProjectBySolidtimeId("st-x")).resolves.toEqual(projectX);
       await expect(repo.findProjectBySolidtimeId("nope")).resolves.toBeNull();
+    });
+
+    it("契約に入っている案件の取引先は変えられない", async () => {
+      await repo.saveClient({ ...clientA, id: "client-b", name: "B 社" });
+      await repo.saveProject(projectX);
+      await repo.saveContract({ ...contract1, projectIds: ["X"], projectRates: {}, projectHoursRanges: {} });
+      await expect(repo.saveProject({ ...projectX, clientId: "client-b" })).rejects.toThrow(RangeError);
+      await expect(repo.listProjects({ clientId: "client-a" })).resolves.toEqual([projectX]);
+    });
+
+    it("契約に入っていない案件なら取引先を変えられる", async () => {
+      await repo.saveClient({ ...clientA, id: "client-b", name: "B 社" });
+      await repo.saveProject(projectX);
+      await repo.saveProject({ ...projectX, clientId: "client-b" });
+      await expect(repo.listProjects({ clientId: "client-b" })).resolves.toHaveLength(1);
     });
 
     it("存在しない取引先の案件は保存できない", async () => {

@@ -137,6 +137,43 @@ describe("createApp: ユースケース", () => {
     });
   });
 
+  describe("同期の重なり", () => {
+    it("同じ同期が実行中なら、次の同期は実行せず busy を返す", async () => {
+      let release: () => void = () => {};
+      f.solidtime.listTimeEntries.mockImplementationOnce(
+        () => new Promise((resolve) => (release = () => resolve([]))),
+      );
+      const first = app.syncSolidtime();
+      await expect(app.syncSolidtime()).resolves.toEqual({ ok: false, error: "busy" });
+      release();
+      await expect(first).resolves.toMatchObject({ ok: true });
+      expect(f.solidtime.listTimeEntries).toHaveBeenCalledTimes(1);
+    });
+
+    it("solidtime と Calendar の同期は同時に動いてよい", async () => {
+      let release: () => void = () => {};
+      f.solidtime.listTimeEntries.mockImplementationOnce(
+        () => new Promise((resolve) => (release = () => resolve([]))),
+      );
+      const first = app.syncSolidtime();
+      await expect(app.syncCalendar()).resolves.toEqual({ ok: true });
+      release();
+      await first;
+    });
+
+    it("busy は失敗として記録しない", async () => {
+      let release: () => void = () => {};
+      f.solidtime.listTimeEntries.mockImplementationOnce(
+        () => new Promise((resolve) => (release = () => resolve([]))),
+      );
+      const first = app.syncSolidtime();
+      await app.syncSolidtime();
+      release();
+      await first;
+      await expect(repo.getSyncStatus("solidtime")).resolves.toMatchObject({ lastFailure: null });
+    });
+  });
+
   describe("syncCalendar: Out of Office を取り込む", () => {
     it("今日から予測の最後の月の末日までを、日ごとの不在秒数にして保存する", async () => {
       const result = await app.syncCalendar();

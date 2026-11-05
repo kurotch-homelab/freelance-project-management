@@ -1,4 +1,4 @@
-import type { Repository } from "@fpm/db";
+import type { Repository, SyncSource } from "@fpm/db";
 import {
   contractCoverage,
   forecastDays,
@@ -34,6 +34,9 @@ export interface AppDeps {
 
 type SyncResult<T> = ({ readonly ok: true } & T) | { readonly ok: false; readonly error: string };
 
+// Share locks across app instances in this process; each source runs independently.
+const syncingSources = new Set<SyncSource>();
+
 interface RatePushResult {
   readonly pushed: { projectId: string; hourlyRate: number }[];
   readonly skipped: (
@@ -48,9 +51,11 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
   const forecastEnd = (asOf: string) => forecastPeriods(asOf, config.forecastMonths).at(-1)!.to;
 
   async function sync<T extends object>(
-    source: "solidtime" | "calendar",
+    source: SyncSource,
     importData: () => Promise<T>,
   ): Promise<SyncResult<T>> {
+    if (syncingSources.has(source)) return { ok: false, error: "busy" };
+    syncingSources.add(source);
     try {
       const result = await importData();
       await repo.recordSync({ source, status: "success", finishedAt: clock.now().toISOString(), error: null });
@@ -63,6 +68,8 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
         // 記録先も利用できない場合でも、同期のエラーは例外にせず呼び出し元に返す。
       }
       return { ok: false, error: message };
+    } finally {
+      syncingSources.delete(source);
     }
   }
 

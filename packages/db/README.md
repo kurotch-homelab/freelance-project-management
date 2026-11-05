@@ -10,9 +10,9 @@ import { createDatabase, createRepository, migrateToLatest } from "@fpm/db";
 const db = createDatabase({ kind: "sqlite", filename: "data.sqlite" });
 // テスト: createDatabase({ kind: "pglite" })
 // 本番 PostgreSQL: createDatabase({ kind: "postgres", connectionString })
-await migrateToLatest(db);
-const repository = createRepository(db);
 try {
+  await migrateToLatest(db);
+  const repository = createRepository(db);
   const clients = await repository.listClients();
 } finally {
   await db.destroy();
@@ -23,8 +23,11 @@ try {
 
 - `kysely` 0.29.8: 全 DB 共通の型付きクエリと TypeScript マイグレーション。
   Migrator の Provider はコード内のマイグレーションを返し、ファイルを探索しない。
+  1 件ずつスキーマ変更と適用履歴を同じトランザクションで確定する。
+  失敗した 1 件は全体をロールバックし、それ以前に成功した分は維持する。
 - SQLite: Node 標準の `node:sqlite.DatabaseSync` を小さなアダプターで
   `SqliteDialect` に接続する。外部キーを有効にし、追加のネイティブモジュールは使わない。
+  Kysely 標準の SQLite アダプターと異なり、DDL のトランザクションを有効にする。
 - `@electric-sql/pglite` 0.5.15: テスト用の PostgreSQL。
   [Kysely 組み込みの PGliteDialect](https://kysely-org.github.io/kysely-apidoc/classes/PGliteDialect.html)
   を使うため、外部 Dialect パッケージも自作 Dialect も不要。
@@ -46,6 +49,8 @@ try {
   取引先行をロックしてから、保存済み契約と合わせて `validateContracts` を呼び、
   契約・対象案件・単価・目安時間を同じトランザクションで更新する。
   契約から外した案件の月別上書きは削除し、残した案件の上書きは維持する。
+  案件の取引先変更と月別上書きの保存も同じ取引先ロックを使い、
+  契約に入っている案件の取引先変更は拒否する。
 - 月別上書きの主キーは `[contractId, projectId, month]` の JSON 文字列。
   `NULL` を含む UNIQUE 制約の違いに依存せず、契約全体の上書きも 1 件にする。
   記録日時は `recorded_at` に保存する。

@@ -1,6 +1,6 @@
 export { billableHours, lineAmount, consumptionTax, summarizeInvoice } from "./billing.ts";
 export type { InvoiceEntry, InvoiceLine, InvoiceSummary } from "./billing.ts";
-export { invoiceDates } from "./payment-terms.ts";
+export { invoiceDates, validatePaymentTerms } from "./payment-terms.ts";
 export type { PaymentTerms, InvoiceDates } from "./payment-terms.ts";
 export { contractCoverage, rateFor, validateContracts } from "./contracts.ts";
 export type { Contract, ContractCoverage } from "./contracts.ts";

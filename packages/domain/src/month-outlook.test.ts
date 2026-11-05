@@ -158,6 +158,48 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
     expect(c).toMatchObject({ contractId: "c1", forecastSeconds: 5 * HOUR, assumesRenewal: true });
   });
 
+  it("更新見込みが「高い」契約は、終了した月より後の月にも更新前提として出す", () => {
+    const outlooks = monthOutlook({
+      month: "2026-12",
+      asOf,
+      contracts: [contract({ end: "2026-11-30", renewalOutlook: "likely", hoursRange: {} })],
+      actual: [],
+      forecast: [row("X", "2026-12-07", 4 * HOUR, true)],
+      hoursRangeOverrides: [],
+    });
+    expect(outlooks).toHaveLength(1);
+    expect(outlooks[0]).toMatchObject({ contractId: "c1", forecastSeconds: 4 * HOUR, assumesRenewal: true });
+    expect(outlooks[0]?.estimate.subtotal).toBe(20_000);
+  });
+
+  it("更新見込みが「高い」契約でも、あとに次の契約があれば、終了後の月には出さない", () => {
+    const outlooks = monthOutlook({
+      month: "2026-12",
+      asOf,
+      contracts: [
+        contract({ id: "c1", end: "2026-11-30", renewalOutlook: "likely", hoursRange: {} }),
+        contract({ id: "c2", start: "2026-12-01", hoursRange: {} }),
+      ],
+      actual: [],
+      forecast: [],
+      hoursRangeOverrides: [],
+    });
+    expect(outlooks.map((o) => o.contractId)).toEqual(["c2"]);
+  });
+
+  it.each(["undecided", "ending"] as const)("更新見込みが %s の契約は、終了後の月には出さない", (outlook) => {
+    expect(
+      monthOutlook({
+        month: "2026-12",
+        asOf,
+        contracts: [contract({ end: "2026-11-30", renewalOutlook: outlook })],
+        actual: [],
+        forecast: [],
+        hoursRangeOverrides: [],
+      }),
+    ).toEqual([]);
+  });
+
   it("その月に有効な契約は、稼働がなくても出す(下限の不足が分かるように)", () => {
     const [c] = outlookFor({});
     expect(c).toMatchObject({ landingSeconds: 0, warnings: [{ kind: "belowMinForecast", seconds: 140 * HOUR }] });

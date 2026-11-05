@@ -154,10 +154,19 @@ export function monthOutlook(input: MonthOutlookInput): readonly MonthOutlook[] 
     group.assumesRenewal ||= coverage.assumesRenewal;
   }
 
-  // 重複検証済みの契約の実期間が月に重なることは、更新前提でない被覆があることと同じ。
-  return Array.from(totals.values()).filter(({ contract }) =>
-    contract.start.slice(0, 7) <= month && (contract.end === null || contract.end.slice(0, 7) >= month),
-  ).sort((a, b) => a.contract.start.localeCompare(b.contract.start)).map((group) => {
+  return Array.from(totals.values()).filter((group) => {
+    const { contract } = group;
+    if (contract.start.slice(0, 7) <= month && (contract.end === null || contract.end.slice(0, 7) >= month)) {
+      return true;
+    }
+    // 終了後の月は月初の被覆で判定できる。更新前提で延長されるのは案件の最後の契約だけ。
+    // 予測行がない月も、更新前提の契約と目安時間の不足を表示する。
+    group.assumesRenewal = contract.projectIds.some((projectId) => {
+      const coverage = contractCoverage(contracts, projectId, `${month}-01`);
+      return coverage?.contract.id === contract.id && coverage.assumesRenewal;
+    });
+    return group.assumesRenewal;
+  }).sort((a, b) => a.contract.start.localeCompare(b.contract.start)).map((group) => {
     const { contract } = group;
     const projects = contract.projectIds.map<MonthOutlookProject>((projectId) => {
       const { actualSeconds, forecastSeconds: rawForecastSeconds, range } = group.projects.get(projectId)!;

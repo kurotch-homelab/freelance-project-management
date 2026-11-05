@@ -15,6 +15,19 @@ function assertDay(day: number | "end", name: string): void {
   }
 }
 
+/** 対象月に依存しない支払条件の値域を検証する。 */
+export function validatePaymentTerms(terms: PaymentTerms): void {
+  assertDay(terms.closingDay, "closingDay");
+  assertDay(terms.paymentDay, "paymentDay");
+  if (
+    !Number.isInteger(terms.paymentMonthOffset) ||
+    terms.paymentMonthOffset < 0 ||
+    terms.paymentMonthOffset > 12
+  ) {
+    throw new RangeError("paymentMonthOffset must be an integer from 0 to 12");
+  }
+}
+
 function daysInMonth(year: number, month: number): number {
   if (month === 2) {
     const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
@@ -34,15 +47,7 @@ export function invoiceDates(month: string, terms: PaymentTerms): InvoiceDates {
   if (month.length !== 7 || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
     throw new RangeError("month must be a valid month in YYYY-MM format");
   }
-  assertDay(terms.closingDay, "closingDay");
-  assertDay(terms.paymentDay, "paymentDay");
-  if (
-    !Number.isInteger(terms.paymentMonthOffset) ||
-    terms.paymentMonthOffset < 0 ||
-    terms.paymentMonthOffset > 12
-  ) {
-    throw new RangeError("paymentMonthOffset must be an integer from 0 to 12");
-  }
+  validatePaymentTerms(terms);
 
   const year = Number(month.slice(0, 4));
   const monthNumber = Number(month.slice(5, 7));
