@@ -2,5 +2,10 @@
   "name": "@fpm/google",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "google-auth-library": "^11.3.3"
+  }
 }
