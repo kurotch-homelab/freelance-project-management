@@ -6,6 +6,8 @@ export interface SolidtimeClientOptions {
   readonly token: string;
   readonly timeZone: string;
   readonly memberId?: string;
+  /** Per-request timeout including response body reads, in milliseconds. Defaults to 30,000. */
+  readonly timeoutMs?: number;
   readonly fetch?: typeof globalThis.fetch;
 }
 

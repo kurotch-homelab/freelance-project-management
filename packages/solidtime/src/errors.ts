@@ -1,17 +1,19 @@
 export class SolidtimeApiError extends Error {
-  readonly status: number;
+  readonly status: number | null;
+  readonly detail: string | undefined;
 
-  /** status is 0 when no HTTP response was received. */
-  constructor(status: number, message: string) {
-    super(message);
+  /** status is null for transport failures and timeouts; detail must be redacted. */
+  constructor(status: number | null, detail?: string) {
+    super(status === null ? "Solidtime request failed" : `Solidtime request failed (HTTP ${status})`);
     this.name = "SolidtimeApiError";
     this.status = status;
+    this.detail = detail;
   }
 }
 
 export class SolidtimeAuthError extends SolidtimeApiError {
-  constructor(message = "Unauthenticated.") {
-    super(401, message);
+  constructor(detail?: string) {
+    super(401, detail);
     this.name = "SolidtimeAuthError";
   }
 }
