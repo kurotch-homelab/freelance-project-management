@@ -2,6 +2,8 @@ export { billableHours, lineAmount, consumptionTax, summarizeInvoice } from "./b
 export type { InvoiceEntry, InvoiceLine, InvoiceSummary } from "./billing.ts";
 export { invoiceDates } from "./payment-terms.ts";
 export type { PaymentTerms, InvoiceDates } from "./payment-terms.ts";
+export { effectiveHoursRange, hoursRangeWarnings } from "./hours-range.ts";
+export type { HoursRange, HoursRangeOverride, HoursRangeWarning } from "./hours-range.ts";
 export { weekdayAverages } from "./forecast/weekday-average.ts";
 export type { DailyWork } from "./forecast/weekday-average.ts";
 export { forecastDays } from "./forecast/forecast-days.ts";
