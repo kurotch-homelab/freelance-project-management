@@ -134,6 +134,32 @@ describe("createApi: HTTP API", () => {
       await expect((await api.request("/api/hours-range-overrides?month=2026-12")).json()).resolves.toEqual([override]);
     });
 
+    it("契約を保存したら、単価を solidtime に反映し、その結果も返す", async () => {
+      await api.request("/api/clients/client-a", { ...json(clientA), method: "PUT" });
+      await api.request("/api/projects/X", { ...json(projectX), method: "PUT" });
+      vi.mocked(useCases.pushRates).mockResolvedValueOnce({ pushed: [{ projectId: "X", hourlyRate: 5_000 }], skipped: [] });
+      const res = await api.request("/api/contracts/c1", { ...json(contract1), method: "PUT" });
+      expect(res.status).toBe(200);
+      expect(useCases.pushRates).toHaveBeenCalledWith("c1");
+      await expect(res.json()).resolves.toEqual({
+        ok: true,
+        pushRates: { ok: true, pushed: [{ projectId: "X", hourlyRate: 5_000 }], skipped: [] },
+      });
+    });
+
+    it("単価の反映に失敗しても、契約の保存は成功として返す(反映の失敗は本文で知らせる)", async () => {
+      await api.request("/api/clients/client-a", { ...json(clientA), method: "PUT" });
+      await api.request("/api/projects/X", { ...json(projectX), method: "PUT" });
+      vi.mocked(useCases.pushRates).mockRejectedValueOnce(new Error("Solidtime request failed (HTTP 500)"));
+      const res = await api.request("/api/contracts/c1", { ...json(contract1), method: "PUT" });
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        ok: true,
+        pushRates: { ok: false, error: "Solidtime request failed (HTTP 500)" },
+      });
+      await expect((await api.request("/api/contracts")).json()).resolves.toHaveLength(1);
+    });
+
     it("契約の単価を solidtime に反映する", async () => {
       const res = await api.request("/api/contracts/c1/push-rates", { method: "POST" });
       expect(res.status).toBe(200);

@@ -77,7 +77,15 @@ export function createApi({ repo, app, auth }: ApiDeps) {
     const contract = parseContract(await readJson(c.req));
     assertId(c.req.param("id"), contract.id);
     await repo.saveContract(contract);
-    return c.json({ ok: true });
+    try {
+      const result = await app.pushRates(contract.id);
+      return c.json({ ok: true, pushRates: { ok: true, ...result } });
+    } catch (error) {
+      return c.json({ ok: true, pushRates: {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      } });
+    }
   });
   api.post("/api/contracts/:id/push-rates", async (c) => c.json(await app.pushRates(c.req.param("id"))));
 
