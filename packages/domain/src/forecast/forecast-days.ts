@@ -62,6 +62,11 @@ export function forecastDays(input: ForecastInput): readonly ForecastRow[] {
       throw new RangeError("projectId must be unique");
     }
     projectIds.add(project.projectId);
+    if (contracts.some((contract) =>
+      contract.projectIds.includes(project.projectId) && contract.clientId !== project.clientId,
+    )) {
+      throw new RangeError("project.clientId must match its contracts' clientId");
+    }
     const averages = weekdayAverages(project.history, options);
     const clientTotals = clientWork.get(project.clientId) ?? new Map<string, number>();
     clientWork.set(project.clientId, clientTotals);

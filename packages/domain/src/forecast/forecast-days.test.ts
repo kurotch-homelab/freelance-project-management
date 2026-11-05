@@ -33,15 +33,22 @@ const contract = (over: Partial<Contract> & Pick<Contract, "id" | "projectIds">)
   ...over,
 });
 
-/** contracts を省略すると、全案件を含む終了日なしの契約を 1 つ置く */
+/** contracts を省略すると、取引先ごとに、その取引先の全案件を含む終了日なしの契約を 1 つずつ置く */
 const input = (over: Partial<ForecastInput>): ForecastInput => {
   const projects = over.projects ?? [];
+  const clientIds = [...new Set(projects.map((p) => p.clientId))];
   return {
     asOf,
     until: NEXT_MON,
     weeks: 8,
     absenceSeconds: {},
-    contracts: [contract({ id: "default", projectIds: projects.map((p) => p.projectId) })],
+    contracts: clientIds.map((clientId) =>
+      contract({
+        id: `default-${clientId}`,
+        clientId,
+        projectIds: projects.filter((p) => p.clientId === clientId).map((p) => p.projectId),
+      }),
+    ),
     ...over,
     projects,
   };
@@ -240,12 +247,12 @@ describe("forecastDays: 案件ごと・日ごとの稼働予測", () => {
         input({
           projects: [
             project({ projectId: "Old", clientId: "client-old", history: mondays(6 * HOUR) }),
-            project({ projectId: "N1", clientId: "client-n1" }),
-            project({ projectId: "N2", clientId: "client-n2" }),
+            project({ projectId: "N1", clientId: "client-n" }),
+            project({ projectId: "N2", clientId: "client-n" }),
           ],
           contracts: [
             contract({ id: "old", clientId: "client-old", end: "2026-10-31", projectIds: ["Old"] }),
-            contract({ id: "n", clientId: "client-n1", projectIds: ["N1", "N2"] }),
+            contract({ id: "n", clientId: "client-n", projectIds: ["N1", "N2"] }),
           ],
         }),
       );
@@ -358,6 +365,17 @@ describe("forecastDays: 案件ごと・日ごとの稼働予測", () => {
     it("同じ projectId が 2 つあれば受け付けない", () => {
       expect(() =>
         forecastDays(input({ projects: [project({ projectId: "A" }), project({ projectId: "A" })] })),
+      ).toThrow(RangeError);
+    });
+
+    it("案件と契約の取引先が食い違っていたら受け付けない", () => {
+      expect(() =>
+        forecastDays(
+          input({
+            projects: [project({ projectId: "A", clientId: "client-a" })],
+            contracts: [contract({ id: "c", clientId: "client-b", projectIds: ["A"] })],
+          }),
+        ),
       ).toThrow(RangeError);
     });
 

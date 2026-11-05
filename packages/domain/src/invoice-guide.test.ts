@@ -5,6 +5,7 @@ import { invoiceGuide, type InvoiceGuideInput, type InvoiceGuideProject } from "
 const HOUR = 3_600;
 
 const client = (over: Partial<InvoiceGuideInput["client"]> = {}): InvoiceGuideInput["client"] => ({
+  id: "client-a",
   name: "A 社",
   subjectTemplate: "{YYYY}年{M}月分 業務委託料",
   paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" },
@@ -25,8 +26,8 @@ const contract = (over: Partial<Contract> = {}): Contract => ({
   ...over,
 });
 
-const X = (work: InvoiceGuideProject["work"]): InvoiceGuideProject => ({ id: "X", name: "案件 X", work });
-const Y = (work: InvoiceGuideProject["work"]): InvoiceGuideProject => ({ id: "Y", name: "案件 Y", work });
+const X = (work: InvoiceGuideProject["work"]): InvoiceGuideProject => ({ id: "X", clientId: "client-a", name: "案件 X", work });
+const Y = (work: InvoiceGuideProject["work"]): InvoiceGuideProject => ({ id: "Y", clientId: "client-a", name: "案件 Y", work });
 
 const guideFor = (over: Partial<InvoiceGuideInput>) =>
   invoiceGuide({ month: "2026-11", client: client(), contracts: [contract()], projects: [], ...over });
@@ -82,7 +83,8 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
       expect(guide?.lines).toEqual([
         { item: "業務委託契約 2026年11月分", quantity: 47.25, unit: "時間", unitPrice: 5_000, amount: 236_250 },
       ]);
-      expect(guide?.note).toBe("内訳: 案件 X 37.25 時間、案件 Y 10 時間");
+      // 内訳は切り捨てる前の実績を出す(明細の数量は合算してから切り捨てる)
+      expect(guide?.note).toBe("業務委託契約 2026年11月分 の内訳: 案件 X 37時間15分、案件 Y 10時間");
     });
 
     it("合算してから請求時間にする: X 10 時間 1 分 + Y 10 時間 1 分 = 20 時間 2 分 → 20.03h", () => {
@@ -91,6 +93,52 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
         projects: [X([{ date: "2026-11-10", seconds: 10 * HOUR + 60 }]), Y([{ date: "2026-11-10", seconds: 10 * HOUR + 60 }])],
       });
       expect(guide?.lines[0]).toMatchObject({ quantity: 20.03, amount: 100_150 });
+      expect(guide?.note).toBe("業務委託契約 2026年11月分 の内訳: 案件 X 10時間1分、案件 Y 10時間1分");
+    });
+
+    it("名前が同じでも別の契約は合算しない(各 20 秒 → 0 円の行が 2 つ)", () => {
+      const guide = guideFor({
+        client: client({ lineGrouping: "contract" }),
+        contracts: [contract({ id: "c1", projectIds: ["X"] }), contract({ id: "c2", projectIds: ["Y"] })],
+        projects: [X([{ date: "2026-11-10", seconds: 20 }]), Y([{ date: "2026-11-10", seconds: 20 }])],
+      });
+      expect(guide?.lines.map((l) => [l.item, l.quantity, l.amount])).toEqual([
+        ["業務委託契約 2026年11月分(案件 X)", 0, 0],
+        ["業務委託契約 2026年11月分(案件 Y)", 0, 0],
+      ]);
+      expect(guide?.subtotal).toBe(0);
+    });
+
+    it("月の途中で更新した同じ名前の契約は、期間で区別する(単価は同じ)", () => {
+      const guide = guideFor({
+        client: client({ lineGrouping: "contract" }),
+        contracts: [contract({ id: "c1", end: "2026-11-15" }), contract({ id: "c2", start: "2026-11-16" })],
+        projects: [X([{ date: "2026-11-05", seconds: 20 * HOUR }, { date: "2026-11-20", seconds: 10 * HOUR }])],
+      });
+      expect(guide?.lines.map((l) => [l.item, l.quantity])).toEqual([
+        ["業務委託契約 2026年11月分(11/1〜11/15)", 20],
+        ["業務委託契約 2026年11月分(11/16〜11/30)", 10],
+      ]);
+    });
+
+    it("途中で単価が変わる X と、通月で上書き単価の Y: どちらの行にも案件名と期間", () => {
+      const guide = guideFor({
+        client: client({ lineGrouping: "contract" }),
+        contracts: [
+          contract({ id: "c1", end: "2026-11-15", projectRates: { Y: 7_000 } }),
+          contract({ id: "c2", start: "2026-11-16", hourlyRate: 6_000, projectRates: { Y: 7_000 } }),
+        ],
+        projects: [
+          X([{ date: "2026-11-05", seconds: HOUR }, { date: "2026-11-20", seconds: HOUR }]),
+          Y([{ date: "2026-11-05", seconds: HOUR }, { date: "2026-11-20", seconds: HOUR }]),
+        ],
+      });
+      expect(guide?.lines.map((l) => [l.item, l.unitPrice])).toEqual([
+        ["業務委託契約 2026年11月分(案件 X・11/1〜11/15)", 5_000],
+        ["業務委託契約 2026年11月分(案件 Y・11/1〜11/15)", 7_000],
+        ["業務委託契約 2026年11月分(案件 X・11/16〜11/30)", 6_000],
+        ["業務委託契約 2026年11月分(案件 Y・11/16〜11/30)", 7_000],
+      ]);
     });
 
     it("単価の上書きで単価が違う案件は、案件名を添えて単価ごとに行を分ける", () => {
@@ -127,6 +175,40 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
         { item: "案件 X 2026年11月分(11/1〜11/15)", quantity: 20, unit: "時間", unitPrice: 5_000, amount: 100_000 },
         { item: "案件 X 2026年11月分(11/16〜11/30)", quantity: 10, unit: "時間", unitPrice: 6_000, amount: 60_000 },
       ]);
+    });
+
+    it("単価が変わった月に、変わったあとだけ稼働しても期間を出す", () => {
+      const guide = guideFor({ contracts: renewed, projects: [X([{ date: "2026-11-20", seconds: 10 * HOUR }])] });
+      expect(guide?.lines.map((l) => l.item)).toEqual(["案件 X 2026年11月分(11/16〜11/30)"]);
+    });
+
+    it("5,000 → 6,000 → 5,000 円と変わったら、5,000 円の行に離れた 2 つの期間を出す", () => {
+      const guide = guideFor({
+        contracts: [
+          contract({ id: "c1", end: "2026-11-10" }),
+          contract({ id: "c2", start: "2026-11-11", end: "2026-11-20", hourlyRate: 6_000 }),
+          contract({ id: "c3", start: "2026-11-21" }),
+        ],
+        projects: [
+          X([
+            { date: "2026-11-05", seconds: HOUR },
+            { date: "2026-11-15", seconds: HOUR },
+            { date: "2026-11-25", seconds: HOUR },
+          ]),
+        ],
+      });
+      expect(guide?.lines.map((l) => [l.item, l.quantity])).toEqual([
+        ["案件 X 2026年11月分(11/1〜11/10、11/21〜11/30)", 2],
+        ["案件 X 2026年11月分(11/11〜11/20)", 1],
+      ]);
+    });
+
+    it("契約の境界日の稼働は、それぞれの日の契約の単価を使う", () => {
+      const guide = guideFor({
+        contracts: renewed,
+        projects: [X([{ date: "2026-11-15", seconds: HOUR }, { date: "2026-11-16", seconds: HOUR }])],
+      });
+      expect(guide?.lines.map((l) => l.amount)).toEqual([5_000, 6_000]);
     });
 
     it("更新しても単価が同じなら 1 行のまま", () => {
@@ -193,6 +275,21 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
   it("稼働日を含む契約がなければ受け付けない", () => {
     expect(() =>
       guideFor({ contracts: [contract({ start: "2026-11-15" })], projects: [X([{ date: "2026-11-10", seconds: HOUR }])] }),
+    ).toThrow(RangeError);
+  });
+
+  it("ほかの取引先の契約が入っていたら受け付けない", () => {
+    expect(() =>
+      guideFor({
+        contracts: [contract({ clientId: "client-b" })],
+        projects: [X([{ date: "2026-11-10", seconds: HOUR }])],
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it("ほかの取引先の案件が入っていたら受け付けない", () => {
+    expect(() =>
+      guideFor({ projects: [{ id: "X", clientId: "client-b", name: "案件 X", work: [{ date: "2026-11-10", seconds: HOUR }] }] }),
     ).toThrow(RangeError);
   });
 

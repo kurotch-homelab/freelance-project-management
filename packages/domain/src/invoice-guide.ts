@@ -1,4 +1,4 @@
-import { billableHours, summarizeInvoice } from "./billing.ts";
+import { summarizeInvoice } from "./billing.ts";
 import { contractCoverage, rateFor, validateContracts, type Contract } from "./contracts.ts";
 import { formatDate, parseDate } from "./date.ts";
 import type { DailyWork } from "./forecast/weekday-average.ts";
@@ -6,6 +6,7 @@ import { invoiceDates, type InvoiceDates, type PaymentTerms } from "./payment-te
 
 export interface InvoiceGuideProject {
   readonly id: string;
+  readonly clientId: string;
   readonly name: string;
   readonly work: readonly DailyWork[];
 }
@@ -13,6 +14,7 @@ export interface InvoiceGuideProject {
 export interface InvoiceGuideInput {
   readonly month: string;
   readonly client: {
+    readonly id: string;
     readonly name: string;
     readonly subjectTemplate: string;
     readonly paymentTerms: PaymentTerms;
@@ -42,8 +44,10 @@ export interface InvoiceGuide extends InvoiceDates {
 
 interface LineGroup {
   readonly name: string;
+  readonly contractId: string | null;
   readonly hourlyRate: number;
-  readonly projects: Map<string, string>;
+  readonly firstProjectIndex: number;
+  readonly projects: Map<string, { readonly name: string; seconds: number }>;
   seconds: number;
 }
 
@@ -76,11 +80,29 @@ function shortDate(day: number): string {
   return `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 }
 
+function periodsOverlap(left: readonly Period[], right: readonly Period[]): boolean {
+  return left.some((period) => right.some((other) =>
+    period.start <= other.end && other.start <= period.end,
+  ));
+}
+
+function formatWorkTime(seconds: number): string {
+  const hours = Math.floor(seconds / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  if (hours === 0) {
+    return `${minutes}分`;
+  }
+  return minutes === 0 ? `${hours}時間` : `${hours}時間${minutes}分`;
+}
+
 /** 取引先の対象月の実績を、freee に入力する請求書ガイドにまとめる。 */
 export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
   const { month, client, contracts, projects } = input;
   const dates = invoiceDates(month, client.paymentTerms);
   validateContracts(contracts);
+  if (contracts.some((contract) => contract.clientId !== client.id)) {
+    throw new RangeError("contract.clientId must match client.id");
+  }
   const monthStart = `${month}-01`;
   const monthEnd = invoiceDates(month, {
     closingDay: "end", paymentMonthOffset: 0, paymentDay: "end",
@@ -91,9 +113,23 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
   const monthLabel = `${year}年${monthNumber}月分`;
   const groups = new Map<string, Map<number, LineGroup>>();
   const projectIds = new Set<string>();
-  const breakdown: string[] = [];
+  const monthlyContracts = contracts.filter((contract) =>
+    contract.start <= monthEnd && (contract.end === null || contract.end >= monthStart),
+  );
+  // 実績のない契約期間も含め、案件ごとの月内の単価変更を調べる。
+  const monthlyRates = new Map<string, Set<number>>();
+  for (const contract of monthlyContracts) {
+    for (const projectId of contract.projectIds) {
+      const rates = monthlyRates.get(projectId) ?? new Set<number>();
+      rates.add(rateFor(contract, projectId));
+      monthlyRates.set(projectId, rates);
+    }
+  }
 
-  for (const project of projects) {
+  for (const [projectIndex, project] of projects.entries()) {
+    if (project.clientId !== client.id) {
+      throw new RangeError("project.clientId must match client.id");
+    }
     if (projectIds.has(project.id)) {
       throw new RangeError("project.id must be unique");
     }
@@ -113,58 +149,70 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
       }
       const { contract } = coverage;
       const hourlyRate = rateFor(contract, project.id);
-      const key = client.lineGrouping === "project" ? project.id : contract.name;
+      const key = client.lineGrouping === "project" ? project.id : contract.id;
       const rates = groups.get(key) ?? new Map<number, LineGroup>();
       groups.set(key, rates);
       const group = rates.get(hourlyRate) ?? {
         name: client.lineGrouping === "project" ? project.name : contract.name,
+        contractId: client.lineGrouping === "contract" ? contract.id : null,
         hourlyRate,
-        projects: new Map<string, string>(),
+        firstProjectIndex: projectIndex,
+        projects: new Map<string, { readonly name: string; seconds: number }>(),
         seconds: 0,
       };
       rates.set(hourlyRate, group);
-      group.projects.set(project.id, project.name);
+      const projectWork = group.projects.get(project.id) ?? { name: project.name, seconds: 0 };
+      projectWork.seconds += work.seconds;
+      group.projects.set(project.id, projectWork);
       group.seconds += work.seconds;
       projectSeconds += work.seconds;
       if (!Number.isSafeInteger(group.seconds) || !Number.isSafeInteger(projectSeconds)) {
         throw new RangeError("total seconds must be a safe integer");
       }
     }
-    if (projectSeconds > 0) {
-      breakdown.push(`${project.name} ${billableHours(projectSeconds)} 時間`);
-    }
   }
 
   if (groups.size === 0) {
     return null;
   }
-  const entries = Array.from(groups.values()).flatMap((rates) => {
-    const lines = Array.from(rates.values(), (group) => {
+  const lines = Array.from(groups.values()).flatMap((rates) =>
+    Array.from(rates.values(), (group) => {
       // 実績の日付ではなく、同じ単価で契約されている期間を表示する。
-      const matchingContracts = contracts.filter((contract) =>
-        (client.lineGrouping === "project" || contract.name === group.name) &&
+      const matchingContracts = monthlyContracts.filter((contract) =>
+        (group.contractId === null || contract.id === group.contractId) &&
         Array.from(group.projects.keys()).some((projectId) =>
           contract.projectIds.includes(projectId) && rateFor(contract, projectId) === group.hourlyRate,
         ),
       );
       return { ...group, periods: contractPeriods(matchingContracts, monthStart, monthEnd) };
-    });
-    return lines.map((line) => {
-      let suffix = "";
-      if (lines.length > 1) {
-        // 同時期の単価の違いは期間では区別できないので、対象案件名を添える。
-        const concurrentRates = client.lineGrouping === "contract" && lines.some((other) =>
-          other !== line && line.periods.some((period) => other.periods.some((otherPeriod) =>
-            period.start <= otherPeriod.end && otherPeriod.start <= period.end,
-          )),
-        );
-        const label = concurrentRates
-          ? Array.from(line.projects.values()).join("、")
-          : line.periods.map(({ start, end }) => `${shortDate(start)}〜${shortDate(end)}`).join("、");
-        suffix = `(${label})`;
-      }
-      return { item: `${line.name} ${monthLabel}${suffix}`, seconds: line.seconds, hourlyRate: line.hourlyRate };
-    });
+    }),
+  ).sort((a, b) =>
+    a.periods[0]!.start - b.periods[0]!.start || a.firstProjectIndex - b.firstProjectIndex,
+  );
+  const entries = lines.map((line) => {
+    const sameNameLines = lines.filter((other) => other !== line && other.name === line.name);
+    const showProjects = client.lineGrouping === "contract" && sameNameLines.some((other) =>
+      periodsOverlap(line.periods, other.periods),
+    );
+    const showPeriods = Array.from(line.projects.keys()).some((projectId) =>
+      (monthlyRates.get(projectId)?.size ?? 0) > 1,
+    ) || sameNameLines.some((other) => !periodsOverlap(line.periods, other.periods));
+    const labels: string[] = [];
+    if (showProjects) {
+      labels.push(Array.from(line.projects.values(), (project) => project.name).join("、"));
+    }
+    if (showPeriods) {
+      labels.push(line.periods.map(({ start, end }) => `${shortDate(start)}〜${shortDate(end)}`).join("、"));
+    }
+    const suffix = labels.length === 0 ? "" : `(${labels.join("・")})`;
+    return {
+      item: `${line.name} ${monthLabel}${suffix}`,
+      seconds: line.seconds,
+      hourlyRate: line.hourlyRate,
+      breakdown: Array.from(line.projects.values(), ({ name, seconds }) =>
+        `${name} ${formatWorkTime(seconds)}`,
+      ).join("、"),
+    };
   });
 
   // 秒数を行ごとに合算してから切り捨て、税も請求書全体で一度だけ計算する。
@@ -183,7 +231,9 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
       unitPrice: line.hourlyRate,
       amount: line.amount,
     })),
-    note: client.lineGrouping === "contract" ? `内訳: ${breakdown.join("、")}` : null,
+    note: client.lineGrouping === "contract"
+      ? entries.map((entry) => `${entry.item} の内訳: ${entry.breakdown}`).join("\n")
+      : null,
     subtotal: summary.subtotal,
     tax: summary.tax,
     total: summary.total,

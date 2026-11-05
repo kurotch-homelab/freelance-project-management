@@ -172,6 +172,8 @@ freee で請求書を作るときに、そのまま入力できる内容を取�
 - 参考: solidtime のルート定義 https://github.com/solidtime-io/solidtime/blob/main/routes/api.php
 - パスはすべて `/api/v1/organizations/{organization}` の下。集計の時間は秒(`seconds`)、金額 `cost` は通貨の 1/100 で返る
 - 打刻の `billable` は自動では決まらない(打刻時に指定する値)。集計では `billable` な打刻だけを対象にする
+- 期間の絞り込み(`start` / `end`)は打刻の開始時刻で行われる。日をまたぐ打刻は、日ごとの集計でも開始日に入る(2026-11-05 に Sandbox で確認)
+- 集計の `cost` は打刻を作った時点の単価で計算され、あとからプロジェクトの単価を変えても変わらない。請求額はこのシステムで計算するので `cost` は使わない
 - OpenAPI 仕様: 公開されている https://api-docs.solidtime.io/api-docs.json を使う(公式ドキュメント https://docs.solidtime.io/api-reference の元データ、OpenAPI 3.1)
   - リポジトリ直下の `openapi.json` は古い(2025-04 更新、4 パスのみ)ので使わない
   - アプリの `/docs/api.json` は本番環境では 403 になる
