@@ -211,9 +211,11 @@ freee で請求書を作るときに、そのまま入力できる内容を取�
 - 方式: サービスアカウントを使う。渡し方は 2 つから選ぶ
   - Workload Identity Federation(Kubernetes など WIF を使える環境)。サービスアカウントキーは作らない
   - サービスアカウントの JSON キーファイル(WIF を使えない環境)。ファイルのパスを環境変数で指定し、Secret やボリュームで渡す
-- どちらも Google の Application Default Credentials の仕組みで読み込み、アプリのコードは方式を意識しない
-- サービスアカウントにドメイン全体の委任を設定し、自分のユーザーになりかわって Drive・Calendar を使う(Drive のフォルダやカレンダーをサービスアカウントに共有しなくてよい)
-- 委任するスコープは必要なものだけにする(Calendar の読み取り、Drive のファイル操作)
+- WIF と JSON キーのどちらも `google-auth-library` の Application Default Credentials で読み込む。アプリのコードは「アクセストークンを返す関数」だけに依存する
+- 委任は使わない。サービスアカウントに共有する
+  - Calendar: 自分のカレンダーをサービスアカウントのメールアドレスに共有する(「予定の詳細を表示」以上)。要確認: 共有したカレンダーで Out of Office の予定(`eventType`)が読めるか
+  - Drive: 共有ドライブを作り、サービスアカウントをメンバー(コンテンツ管理者)に加える。マイドライブのフォルダを共有するだけだと、サービスアカウントには容量がないのでアップロードに失敗する
+- 使うスコープは必要なものだけにする(`calendar.readonly`、`drive`)
 
 ## 5. 認証(OIDC)
 
@@ -259,9 +261,9 @@ freee で請求書を作るときに、そのまま入力できる内容を取�
 - 勤務時間帯は決めない。Out of Office がなければ祝日も含めて稼働できる日
 - 構成: Vite + React + Hono
 - DB: SQLite と PostgreSQL の両方
-- Google: Workspace のサービスアカウント(ドメイン全体の委任)。WIF を使い、使えない環境では JSON キー
+- Google: Workspace のサービスアカウントに共有する(委任はしない)。WIF を使い、使えない環境では JSON キー
 - 予測の初期値: 直近 8 週、3 か月先まで
 
 ### 要調査
 
-なし(solidtime の単価の単位も確認済み)
+- [ ] Google: サービスアカウントに共有したカレンダーで Out of Office の予定が読めるか(Workspace の実環境で 1 回試す)

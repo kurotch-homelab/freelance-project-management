@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
+    "msw": "^2.15.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
   }

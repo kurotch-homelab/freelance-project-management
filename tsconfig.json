@@ -1,1 +1,14 @@
-{ "files": [], "references": [{ "path": "packages/domain" }] }
+{
+  "files": [],
+  "references": [
+    {
+      "path": "packages/domain"
+    },
+    {
+      "path": "packages/solidtime"
+    },
+    {
+      "path": "packages/google"
+    }
+  ]
+}
