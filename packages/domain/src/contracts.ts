@@ -1,4 +1,5 @@
 import { parseDate } from "./date.ts";
+import { assertHoursRange, type HoursRange } from "./hours-range.ts";
 
 export interface Contract {
   readonly id: string;
@@ -9,6 +10,8 @@ export interface Contract {
   readonly hourlyRate: number;
   readonly projectIds: readonly string[];
   readonly projectRates: Readonly<Record<string, number>>;
+  readonly hoursRange?: HoursRange;
+  readonly projectHoursRanges?: Readonly<Record<string, HoursRange>>;
   readonly renewalOutlook: "likely" | "undecided" | "ending";
 }
 
@@ -61,7 +64,7 @@ function assertRate(rate: number): void {
   }
 }
 
-/** 契約の期間・単価・対象案件を検証し、同じ案件の契約期間の重複を拒否する。 */
+/** 契約の期間・単価・対象案件・目安時間を検証し、同じ案件の契約期間の重複を拒否する。 */
 export function validateContracts(contracts: readonly Contract[]): void {
   const ids = new Set<string>();
   const byProject = new Map<string, Contract[]>();
@@ -87,6 +90,15 @@ export function validateContracts(contracts: readonly Contract[]): void {
         throw new RangeError("projectRates must only contain contract projects");
       }
       assertRate(rate);
+    }
+    if (contract.hoursRange !== undefined) {
+      assertHoursRange(contract.hoursRange);
+    }
+    for (const [projectId, range] of Object.entries(contract.projectHoursRanges ?? {})) {
+      if (!contract.projectIds.includes(projectId)) {
+        throw new RangeError("projectHoursRanges must only contain contract projects");
+      }
+      assertHoursRange(range);
     }
     for (const projectId of contract.projectIds) {
       const projectContracts = byProject.get(projectId) ?? [];

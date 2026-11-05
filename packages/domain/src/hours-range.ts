@@ -22,7 +22,7 @@ function assertNonNegativeFinite(value: number, name: string): void {
   }
 }
 
-function assertHoursRange({ minHours, maxHours }: HoursRange): void {
+export function assertHoursRange({ minHours, maxHours }: HoursRange): void {
   if (minHours !== undefined) {
     assertNonNegativeFinite(minHours, "minHours");
   }

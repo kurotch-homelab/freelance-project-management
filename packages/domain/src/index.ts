@@ -12,3 +12,5 @@ export { weekdayAverages } from "./forecast/weekday-average.ts";
 export type { DailyWork } from "./forecast/weekday-average.ts";
 export { forecastDays } from "./forecast/forecast-days.ts";
 export type { ForecastInput, ForecastProject, ForecastRow } from "./forecast/forecast-days.ts";
+export { monthOutlook } from "./month-outlook.ts";
+export type { MonthOutlookInput, MonthOutlookHoursRangeOverride, MonthOutlookProject, MonthOutlook } from "./month-outlook.ts";
