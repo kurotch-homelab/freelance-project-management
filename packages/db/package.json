@@ -1,0 +1,15 @@
+{
+  "name": "@fpm/db",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.15",
+    "@fpm/domain": "*",
+    "@types/pg": "^8.23.1",
+    "kysely": "^0.29.8",
+    "pg": "^8.23.1"
+  }
+}

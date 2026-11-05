@@ -1,0 +1,115 @@
+import { sql } from "kysely";
+import { Migrator, type Migration, type MigrationProvider } from "kysely/migration";
+import type { Database } from "./database.ts";
+
+const initialSchema: Migration = {
+  async up(db) {
+    await db.schema.createTable("clients")
+      .addColumn("id", "text", (c) => c.primaryKey())
+      .addColumn("name", "text", (c) => c.notNull())
+      .addColumn("closing_day", "text", (c) => c.notNull())
+      .addColumn("payment_month_offset", "integer", (c) => c.notNull())
+      .addColumn("payment_day", "text", (c) => c.notNull())
+      .addColumn("subject_template", "text", (c) => c.notNull())
+      .addColumn("line_grouping", "text", (c) => c.notNull())
+      .addColumn("solidtime_client_id", "text")
+      .addColumn("drive_folder_id", "text")
+      .execute();
+
+    await db.schema.createTable("projects")
+      .addColumn("id", "text", (c) => c.primaryKey())
+      .addColumn("client_id", "text", (c) => c.notNull().references("clients.id"))
+      .addColumn("name", "text", (c) => c.notNull())
+      .addColumn("status", "text", (c) => c.notNull())
+      .addColumn("solidtime_project_id", "text", (c) => c.unique())
+      .addColumn("drive_folder_id", "text")
+      .execute();
+
+    await db.schema.createTable("contracts")
+      .addColumn("id", "text", (c) => c.primaryKey())
+      .addColumn("client_id", "text", (c) => c.notNull().references("clients.id"))
+      .addColumn("name", "text", (c) => c.notNull())
+      .addColumn("start_date", "text", (c) => c.notNull())
+      .addColumn("end_date", "text")
+      .addColumn("hourly_rate", "bigint", (c) => c.notNull().check(sql`hourly_rate >= 0`))
+      .addColumn("min_seconds", "bigint", (c) => c.check(sql`min_seconds >= 0`))
+      .addColumn("max_seconds", "bigint", (c) => c.check(sql`max_seconds >= 0`))
+      .addColumn("has_hours_range", "integer", (c) => c.notNull())
+      .addColumn("has_project_hours_ranges", "integer", (c) => c.notNull())
+      .addColumn("renewal_outlook", "text", (c) => c.notNull())
+      .execute();
+
+    await db.schema.createTable("contract_projects")
+      .addColumn("contract_id", "text", (c) => c.notNull().references("contracts.id").onDelete("cascade"))
+      .addColumn("project_id", "text", (c) => c.notNull().references("projects.id"))
+      .addColumn("position", "integer", (c) => c.notNull())
+      .addColumn("hourly_rate", "bigint", (c) => c.check(sql`hourly_rate >= 0`))
+      .addColumn("min_seconds", "bigint", (c) => c.check(sql`min_seconds >= 0`))
+      .addColumn("max_seconds", "bigint", (c) => c.check(sql`max_seconds >= 0`))
+      .addColumn("has_hours_range", "integer", (c) => c.notNull())
+      .addPrimaryKeyConstraint("contract_projects_pk", ["contract_id", "project_id"])
+      .execute();
+
+    await db.schema.createTable("hours_range_overrides")
+      // A nullable project_id cannot participate in a portable unique key.
+      .addColumn("id", "text", (c) => c.primaryKey())
+      .addColumn("contract_id", "text", (c) => c.notNull().references("contracts.id").onDelete("cascade"))
+      .addColumn("project_id", "text", (c) => c.references("projects.id"))
+      .addColumn("month", "text", (c) => c.notNull())
+      .addColumn("min_seconds", "bigint", (c) => c.check(sql`min_seconds >= 0`))
+      .addColumn("max_seconds", "bigint", (c) => c.check(sql`max_seconds >= 0`))
+      .addColumn("note", "text", (c) => c.notNull())
+      .addColumn("recorded_at", "text", (c) => c.notNull())
+      .execute();
+
+    await db.schema.createTable("time_entries")
+      .addColumn("id", "text", (c) => c.primaryKey())
+      // Keep entries even when their external project is not linked yet.
+      .addColumn("solidtime_project_id", "text")
+      .addColumn("date", "text", (c) => c.notNull())
+      .addColumn("seconds", "bigint", (c) => c.notNull().check(sql`seconds >= 0`))
+      .addColumn("billable", "integer", (c) => c.notNull().check(sql`billable in (0, 1)`))
+      .addColumn("start_at", "text")
+      .addColumn("end_at", "text")
+      .execute();
+
+    await db.schema.createTable("absences")
+      .addColumn("date", "text", (c) => c.primaryKey())
+      .addColumn("seconds", "bigint", (c) => c.notNull().check(sql`seconds >= 0`))
+      .execute();
+
+    await db.schema.createTable("sync_records")
+      .addColumn("id", "text", (c) => c.primaryKey())
+      .addColumn("source", "text", (c) => c.notNull())
+      .addColumn("status", "text", (c) => c.notNull())
+      .addColumn("finished_at", "text", (c) => c.notNull())
+      .addColumn("error", "text")
+      .execute();
+
+    await db.schema.createIndex("projects_client_idx").on("projects").column("client_id").execute();
+    await db.schema.createIndex("contracts_client_idx").on("contracts").column("client_id").execute();
+    await db.schema.createIndex("contract_projects_project_idx").on("contract_projects").column("project_id").execute();
+    await db.schema.createIndex("hours_range_overrides_month_idx").on("hours_range_overrides").column("month").execute();
+    await db.schema.createIndex("time_entries_date_idx").on("time_entries").column("date").execute();
+    await db.schema.createIndex("sync_records_source_idx").on("sync_records").column("source").execute();
+  },
+  async down(db) {
+    for (const table of [
+      "sync_records", "absences", "time_entries", "hours_range_overrides",
+      "contract_projects", "contracts", "projects", "clients",
+    ]) {
+      await db.schema.dropTable(table).execute();
+    }
+  },
+};
+
+const provider: MigrationProvider = {
+  async getMigrations() {
+    return { "001_initial_schema": initialSchema };
+  },
+};
+
+export async function migrateToLatest(db: Database): Promise<void> {
+  const { error } = await new Migrator({ db, provider }).migrateToLatest();
+  if (error !== undefined) throw error;
+}

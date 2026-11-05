@@ -47,7 +47,7 @@
 | 稼働 TimeEntry | solidtime から取り込んだ打刻と集計値。開始・終了・時間、billable フラグ、solidtime entry ID |
 | 請求見込み BillingEstimate | 案件 × 対象月。稼働時間合計、税抜額、消費税、税込額 |
 | 請求書ガイド InvoiceGuide | 取引先 × 対象月。請求日、支払期日、件名、明細行(品目・数量・単価・金額)、税抜・消費税・税込。保存はせず、その都度計算する |
-| 不在予定 Absence | Google Calendar の Out of Office から取り込む。開始・終了日時、calendar event ID |
+| 不在 Absence | Google Calendar の Out of Office から取り込み、日ごとの不在秒数に直して保存する(予定そのものは保存しない) |
 | 稼働予測 Forecast | 案件 × 日付。予測時間、予測のもと(案件の実績 / 同じ取引先の実績 / 稼働の空き)、参照した週数、作成日時 |
 
 ## 3. 計算ルール(最初の TDD 対象)
@@ -228,7 +228,7 @@ freee で請求書を作るときに、そのまま入力できる内容を取�
 
 ## 6. 非機能
 
-- DB: SQLite と PostgreSQL の両方で動くようにする。Drizzle ORM で差を吸収し、どちらを使うかは環境変数で選ぶ。SQLite のときは Kubernetes では PVC に置き、レプリカは 1
+- DB: SQLite と PostgreSQL の両方で動くようにする。Kysely(型つきの SQL クエリビルダー)でクエリとマイグレーションを 1 組だけ書き、どちらを使うかは環境変数で選ぶ。SQLite のときは Kubernetes では PVC に置き、レプリカは 1
 - DB に依存するテストは SQLite と PostgreSQL の両方で流す(PostgreSQL は Testcontainers など)
 - バックアップ: SQLite はファイルを、PostgreSQL は `pg_dump` を定期的に取る(Drive に置くのも候補)
 - 秘密情報(solidtime のトークン、OIDC の client secret、サービスアカウントの JSON キー)は環境変数か Kubernetes Secret で渡す。DB には保存しない
@@ -238,7 +238,7 @@ freee で請求書を作るときに、そのまま入力できる内容を取�
 
 - TypeScript、React(Forma デザインシステムを使うため)
 - フロント: Vite + React。API: Hono。定期実行の同期処理も API 側に置く
-- DB アクセス: Drizzle ORM(SQLite / PostgreSQL)
+- DB アクセス: Kysely(SQLite / PostgreSQL)。Drizzle はテーブル定義を DB ごとに分けて書く必要があるため使わない
 - Google API: `googleapis`(認証は Application Default Credentials)
 - OIDC: `openid-client`
 - テスト: Vitest(ドメイン・ユースケース)、MSW(外部 API のモック)、Playwright(E2E)
