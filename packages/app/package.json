@@ -1,0 +1,7 @@
+{
+  "name": "@fpm/app",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@fpm/domain": "*", "@fpm/db": "*", "@fpm/solidtime": "*", "@fpm/google": "*" }
+}
