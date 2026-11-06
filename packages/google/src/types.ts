@@ -5,6 +5,8 @@ export type AccessTokenProvider = () => Promise<string>;
 export interface GoogleClientOptions {
   readonly getAccessToken: AccessTokenProvider;
   readonly fetch?: typeof globalThis.fetch;
+  /** Deadline for token acquisition and the complete HTTP response. Defaults to 30 seconds. */
+  readonly timeoutMs?: number;
 }
 
 export interface CalendarClientOptions extends GoogleClientOptions {

@@ -5,39 +5,60 @@ import type { GoogleClientOptions } from "./types.ts";
 
 export function createGoogleRequest(options: GoogleClientOptions) {
   const fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
+  const timeoutMs = options.timeoutMs ?? 30_000;
 
   return async function request<T>(
     url: URL,
     parse: (body: unknown, status: number) => T,
     init: RequestInit = {},
   ): Promise<T> {
-    const token = await resolveAccessToken(options.getAccessToken);
-    let response: Response;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new GoogleApiError(0, "Google request timed out"));
+        controller.abort();
+      }, timeoutMs);
+    });
     try {
-      const headers = new Headers(init.headers);
-      headers.set("Authorization", `Bearer ${token}`);
-      headers.set("Accept", "application/json");
-      response = await fetcher(url.toString(), { ...init, headers });
-    } catch {
-      // Transport exceptions may include the authorization header; never retain the cause.
-      throw new GoogleApiError(0, "Google request failed before receiving a response");
-    }
+      // The provider cannot be aborted. Racing it also prevents a late token from starting a fetch.
+      const token = await Promise.race([resolveAccessToken(options.getAccessToken), expired]);
+      let response: Response;
+      let text: string;
+      try {
+        const headers = new Headers(init.headers);
+        headers.set("Authorization", `Bearer ${token}`);
+        headers.set("Accept", "application/json");
+        [response, text] = await Promise.race([
+          (async () => {
+            const result = await fetcher(url.toString(), { ...init, headers, signal: controller.signal });
+            return [result, await result.text()] as const;
+          })(),
+          expired,
+        ]);
+      } catch {
+        // Transport/body exceptions may contain credentials; never retain the cause.
+        throw new GoogleApiError(0, controller.signal.aborted ? "Google request timed out" : "Google request failed");
+      }
 
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      // Classify non-JSON errors by HTTP status, too.
+      let payload: unknown;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        // Classify non-JSON errors by HTTP status, too.
+      }
+      if (!response.ok) {
+        const message = isRecord(payload) && isRecord(payload.error) && typeof payload.error.message === "string"
+          ? payload.error.message
+          : `Google request failed (HTTP ${response.status})`;
+        const safeMessage = message.replaceAll(token, "[REDACTED]");
+        if (response.status === 401 || response.status === 403) throw new GoogleAuthError(response.status, safeMessage);
+        throw new GoogleApiError(response.status, safeMessage);
+      }
+      return parse(payload, response.status);
+    } finally {
+      clearTimeout(timer);
     }
-    if (!response.ok) {
-      const message = isRecord(payload) && isRecord(payload.error) && typeof payload.error.message === "string"
-        ? payload.error.message
-        : `Google request failed (HTTP ${response.status})`;
-      const safeMessage = message.replaceAll(token, "[REDACTED]");
-      if (response.status === 401 || response.status === 403) throw new GoogleAuthError(response.status, safeMessage);
-      throw new GoogleApiError(response.status, safeMessage);
-    }
-    return parse(payload, response.status);
   };
 }
 

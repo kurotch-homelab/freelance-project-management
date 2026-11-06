@@ -186,3 +186,39 @@ describe("startScheduler: 定期的に同期する", () => {
     stop();
   });
 });
+
+describe("loadConfig: レビューを受けて足した検証", () => {
+  it.each([
+    ["SOLIDTIME_BASE_URL", "ftp://solidtime.example.com"],
+    ["SOLIDTIME_BASE_URL", "https://solidtime.example.com/#fragment"],
+    ["SOLIDTIME_BASE_URL", "https://solidtime.example.com/?q=1"],
+    ["SOLIDTIME_BASE_URL", "https://user:pass@solidtime.example.com"],
+    ["OIDC_ISSUER", "ftp://idp.example.com"],
+    ["OIDC_REDIRECT_URI", "https://fpm.example.com/auth/callback#x"],
+  ])("%s=%s は使えない URL としてエラー(値はメッセージに出さない)", (key, value) => {
+    expect(() => loadConfig({ ...base, [key]: value })).toThrow(ConfigError);
+    try {
+      loadConfig({ ...base, [key]: value });
+    } catch (e) {
+      expect((e as Error).message).toContain(key);
+      expect((e as Error).message).not.toContain(value);
+    }
+  });
+
+  it("パスつきのベース URL は使える(サブパスに置いた solidtime)", () => {
+    expect(loadConfig({ ...base, SOLIDTIME_BASE_URL: "https://example.com/solidtime" }).solidtime.baseUrl).toBe(
+      "https://example.com/solidtime",
+    );
+  });
+
+  it.each([
+    ["FORECAST_WEEKS", "52", true],
+    ["FORECAST_WEEKS", "53", false],
+    ["FORECAST_MONTHS", "24", true],
+    ["FORECAST_MONTHS", "25", false],
+  ])("%s=%s の上限(使えるなら %s)", (key, value, ok) => {
+    const load = () => loadConfig({ ...base, [key]: value });
+    if (ok) expect(load).not.toThrow();
+    else expect(load).toThrow(ConfigError);
+  });
+});

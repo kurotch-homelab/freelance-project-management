@@ -7,7 +7,7 @@ import { createDatabase, createRepository, migrateToLatest } from "@fpm/db";
 import { createDriveClient } from "@fpm/google";
 import { createSolidtimeClient } from "@fpm/solidtime";
 import { Hono } from "hono";
-import { http, HttpResponse } from "msw";
+import { http, HttpResponse, passthrough } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ConfigError, loadConfig } from "./config.ts";
@@ -298,5 +298,85 @@ describe("additional configuration boundaries", () => {
     expect(() => loadConfig({ ...env, DB_KIND: "postgres" })).toThrow("DATABASE_URL");
     expect(loadConfig({ ...env, DB_KIND: "postgres", DATABASE_URL: "postgres://db/fpm", SQLITE_PATH: undefined }).database)
       .toEqual({ kind: "postgres", connectionString: "postgres://db/fpm" });
+  });
+});
+
+describe("レビューを受けて足した振る舞い", () => {
+  it("見つからないアセット(拡張子つき、/assets 配下)は index.html ではなく 404", async () => {
+    const { app } = await build({ staticDir: await staticDirectory() });
+    for (const path of ["/assets/missing.js", "/favicon.ico", "/assets/nested/x"]) {
+      expect((await app.request(path)).status, path).toBe(404);
+    }
+  });
+
+  it("エンコードした区切りで /api や /auth を装うパスにも index.html を返さない", async () => {
+    const { app } = await build({ staticDir: await staticDirectory() });
+    for (const path of ["/api%2Fclients", "/auth%2Flogin"]) {
+      const response = await app.request(path);
+      expect(response.headers.get("content-type") ?? "", path).not.toContain("text/html");
+    }
+  });
+
+  it("どの応答にも nosniff と frame-ancestors 'none' を付ける", async () => {
+    const { app } = await build({ staticDir: await staticDirectory() });
+    for (const path of ["/", "/assets/app.js", "/api/health", "/api/clients", "/auth/login"]) {
+      const response = await app.request(path);
+      expect(response.headers.get("x-content-type-options"), path).toBe("nosniff");
+      expect(response.headers.get("content-security-policy") ?? "", path).toContain("frame-ancestors 'none'");
+    }
+  });
+
+  it("/api と /auth の応答はキャッシュさせない", async () => {
+    const { app } = await build();
+    for (const path of ["/api/health", "/api/clients", "/auth/login"]) {
+      expect((await app.request(path)).headers.get("cache-control"), path).toBe("no-store");
+    }
+  });
+
+  it("/readyz は DB に問い合わせ、使えれば 200、閉じたあとは 503(認証なし)", async () => {
+    const built = await build();
+    const ready = await built.app.request("/readyz");
+    expect(ready.status).toBe(200);
+    await expect(ready.json()).resolves.toEqual({ ok: true });
+    await built.close();
+    expect((await built.app.request("/readyz")).status).toBe(503);
+  });
+
+  it("クライアントが切断した処理中のリクエストも、終わるのを待ってから DB を閉じる", async () => {
+    const deps = dependencies();
+    const db = createDatabase(config.database);
+    const destroy = vi.spyOn(db, "destroy");
+    deps.createDatabase.mockReturnValue(db);
+    let release = () => {};
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let started = () => {};
+    const handlerStarted = new Promise<void>((resolve) => { started = resolve; });
+    const finished = vi.fn();
+    const slow = new Hono();
+    slow.post("/api/slow", async (c) => {
+      started();
+      await pending;
+      finished();
+      return c.json({ ok: true });
+    });
+    const running = await startServer({ ...config, port: 0 }, { ...deps, createApi: (() => slow) as never });
+    cleanups.push(running.stop);
+    cleanups.push(async () => release());
+    const address = running.server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP port");
+    // 偽の IdP(MSW)はローカルのサーバーへのリクエストを止めるので、ここだけ素通しにする
+    network.use(http.post(`http://127.0.0.1:${address.port}/api/slow`, () => passthrough()));
+    const abort = new AbortController();
+    const request = fetch(`http://127.0.0.1:${address.port}/api/slow`, { method: "POST", signal: abort.signal }).catch(() => null);
+    await handlerStarted;
+    abort.abort();
+    await request;
+    const stopping = running.stop();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(destroy).not.toHaveBeenCalled();
+    release();
+    await stopping;
+    expect(finished).toHaveBeenCalledOnce();
+    expect(destroy).toHaveBeenCalledOnce();
   });
 });

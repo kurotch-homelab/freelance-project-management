@@ -47,14 +47,20 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   };
   const url = (key: string): string => {
     const value = required(key);
-    try { new URL(value); } catch { errors.add(key); }
+    try {
+      const parsed = new URL(value);
+      // Check delimiters too: empty query/fragment/userinfo are still forbidden.
+      const authority = value.trim().replace(/[\t\n\r]/g, "").match(/^[^:]+:[/\\]*([^/\\?#]*)/)?.[1];
+      if (!["http:", "https:"].includes(parsed.protocol)
+        || parsed.username || parsed.password || authority?.includes("@") || /[?#]/.test(parsed.href)) errors.add(key);
+    } catch { errors.add(key); }
     return value;
   };
 
   const port = integer("PORT", 3000, 65_535);
   const timeZone = env.TIME_ZONE ?? "Asia/Tokyo";
   try { new Intl.DateTimeFormat("en", { timeZone }); } catch { errors.add("TIME_ZONE"); }
-  const forecast = { weeks: integer("FORECAST_WEEKS", 8), months: integer("FORECAST_MONTHS", 3) };
+  const forecast = { weeks: integer("FORECAST_WEEKS", 8, 52), months: integer("FORECAST_MONTHS", 3, 24) };
   // Node timers clamp delays above a signed 32-bit integer to 1 ms.
   const syncIntervalMinutes = integer("SYNC_INTERVAL_MINUTES", 1_440, Math.floor(2_147_483_647 / 60_000));
   const dbKind = required("DB_KIND");

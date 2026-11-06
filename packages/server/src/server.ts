@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { extname, join, resolve } from "node:path";
 import { createApi } from "@fpm/api";
 import { createApp, type AppDeps } from "@fpm/app";
 import { createOidcAuth } from "@fpm/auth";
@@ -9,6 +9,7 @@ import { createSolidtimeClient } from "@fpm/solidtime";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import type { Config } from "./config.ts";
+import { securityHeaders } from "./headers.ts";
 
 export interface Logger {
   info(message: string): void;
@@ -23,7 +24,12 @@ const defaults = {
 };
 export type ServerDeps = Partial<typeof defaults>;
 
-const reservedPath = (path: string) => /^\/(?:api|auth)(?:\/|$)/.test(path);
+function decodePath(path: string): string | null {
+  try { return decodeURIComponent(path); } catch { return null; }
+}
+
+const reservedPath = (path: string) => /^\/(?:api|auth)(?:\/|$)/.test(path)
+  || /^\/(?:api|auth)(?:\/|$)/.test(decodePath(path) ?? "");
 
 /** Builds the application without listening or scheduling; factories avoid network access in tests. */
 export async function buildServer(config: Config, deps: ServerDeps = {}) {
@@ -62,9 +68,25 @@ export async function buildServer(config: Config, deps: ServerDeps = {}) {
       now: () => d.clock.now(),
     });
     const app = new Hono();
+    let closing: Promise<void> | undefined;
+    app.use("*", async (c, next) => {
+      await next();
+      for (const [name, value] of Object.entries(securityHeaders)) c.header(name, value);
+      if (reservedPath(c.req.path)) c.header("Cache-Control", "no-store");
+    });
     app.onError((_error, c) => {
       d.logger.error("HTTP request failed");
       return c.json({ error: "internal error" }, 500);
+    });
+    app.get("/readyz", async (c) => {
+      c.header("Cache-Control", "no-store");
+      if (closing) return c.json({ ok: false }, 503);
+      try {
+        await db.selectNoFrom((eb) => eb.val(1).as("ok")).executeTakeFirstOrThrow();
+        return c.json({ ok: !closing }, closing ? 503 : 200);
+      } catch {
+        return c.json({ ok: false }, 503);
+      }
     });
     app.route("/auth", auth.routes);
     // createApi already includes the /api prefix and the health/auth ordering.
@@ -77,11 +99,18 @@ export async function buildServer(config: Config, deps: ServerDeps = {}) {
       }
       const files = serveStatic({ root });
       const index = serveStatic({ root, path: "index.html" });
-      app.use("*", async (c, next) => reservedPath(c.req.path) ? c.notFound() : next(), files, index);
+      app.use("*",
+        async (c, next) => reservedPath(c.req.path) ? c.notFound() : next(),
+        files,
+        async (c, next) => {
+          const path = decodePath(c.req.path);
+          if (path === null || extname(path) || /^\/assets(?:\/|$)/.test(path)) return c.notFound();
+          return index(c, next);
+        },
+      );
     }
     app.notFound((c) => c.json({ error: "not found" }, 404));
 
-    let closing: Promise<void> | undefined;
     return {
       app,
       async sync() {
