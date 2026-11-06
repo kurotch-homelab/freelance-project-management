@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "skill": "forma-design-system",
+  "snapshotId": "0464df33a81b76f7ac4c53d9d908db0c828f7fc84c4f9c52c5e40c1b386133ea",
+  "mode": "react",
+  "fonts": "bundled",
+  "assetsDir": "public/forma",
+  "packages": {
+    "react": {
+      "name": "@kurotch-homelab/forma-react",
+      "version": "0.1.0"
+    },
+    "styles": {
+      "name": "@kurotch-homelab/forma-styles",
+      "version": "0.2.0"
+    },
+    "tokens": {
+      "name": "@kurotch-homelab/forma-tokens",
+      "version": "0.1.0"
+    }
+  },
+  "dependency": {
+    "name": "@kurotch-homelab/forma-react",
+    "spec": "file:vendor/forma/kurotch-homelab-forma-react-0.1.0.tgz"
+  },
+  "files": {
+    "public/forma/tokens.css": "f0ac09b4e24ef00bbf07b573bdabe3281ab1952a63c9c02b35a672b0b044d6f8",
+    "public/forma/tokens.json": "3962d4b9c014222e126837aea7d060701b6ac7fa18ba5b904c568e7bfd24947f",
+    "public/forma/forma.css": "e07692a3625b64e40f8aed9be6b24f9444103fb88c5f24546f1e5ac2eebae7ff",
+    "public/forma/fonts/fonts.css": "902eac5acc32f0fb8b5ea2fc7954ce1cb920faeca6274c72828e6b3b660525f9",
+    "public/forma/fonts/IBMPlexSansJP-Medium.ttf": "1d09f5e25b19e54b2c55da70de58f9962512c3e07ed7c3e1c9bad77ace5c22e6",
+    "public/forma/fonts/IBMPlexSansJP-Regular.ttf": "372f8bba95f386856ae435dc0e69f08db1cac29bed513d99171a0ae2d307ba2a",
+    "public/forma/fonts/IBMPlexSansJP-SemiBold.ttf": "5985c29d2d5d444072915cf5874dc80e0a3f5fadbf14a9e3013a03a8fe6d7ff5",
+    "public/forma/fonts/OFL.txt": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
+    "public/forma/fonts/SOURCE.txt": "d3ea6241c027b726817891d20ceb543be29999377389dfdc3a3e6bbf400f3812",
+    "vendor/forma/docs/DESIGN.md": "73cc6a3ca2f0cc0e43988140b7041f852019442f5509050e9b086862d184d9c9",
+    "vendor/forma/docs/HTML.md": "267010c364d608ecb854bc169f538e81e50478cdedf8a0d6f5bb743de271a584",
+    "vendor/forma/docs/INTEGRATION.md": "c5ab239c0fbf419e16359143c03a6678beac326df7e02c4ed030edcf0318324a",
+    "vendor/forma/docs/REACT.md": "c00ae8388df0e5d7e605022e18b0527ac3aefbe003a601c6f80d016c21a60d26",
+    "vendor/forma/kurotch-homelab-forma-react-0.1.0.tgz": "8d1ad7b1cf2798a6f5ac42f3b55b7657a593d3397182117e3eee0d96eaa4c6ea"
+  }
+}

@@ -1,0 +1,4 @@
+IBM Plex Sans JP, original unmodified font files.
+Source: https://raw.githubusercontent.com/google/fonts/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/ibmplexsansjp/
+License: SIL Open Font License 1.1; see OFL.txt.
+Regular 400 / Medium 500 / SemiBold 600.
