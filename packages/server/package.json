@@ -1,0 +1,26 @@
+{
+  "name": "@fpm/server",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node dist/main.js"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@fpm/api": "*",
+    "@fpm/app": "*",
+    "@fpm/auth": "*",
+    "@fpm/db": "*",
+    "@fpm/google": "*",
+    "@fpm/solidtime": "*",
+    "@hono/node-server": "^2.1.6",
+    "hono": "^4.13.16"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
