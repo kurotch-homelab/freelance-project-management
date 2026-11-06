@@ -4,7 +4,7 @@ export { migrateToLatest } from "./migrations.ts";
 export { createRepository } from "./repository.ts";
 export type { Schema } from "./schema.ts";
 export type {
-  Absences, ClientFilter, ClientRecord, DateRange, HoursRangeOverrideFilter,
+  ClientBilling, SolidtimeCatalog, Absences, ClientFilter, ClientRecord, DateRange, HoursRangeOverrideFilter,
   HoursRangeOverrideRecord, ProjectDailyWork, ProjectRecord, Repository,
   SyncRecord, SyncSource, SyncStatus, TimeEntryRecord, UnlinkedSolidtimeProject,
 } from "./types.ts";

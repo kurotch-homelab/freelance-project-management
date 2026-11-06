@@ -1,6 +1,6 @@
 import type { Contract } from "@fpm/domain";
 import type { ColumnType } from "kysely";
-import type { ClientRecord, ProjectRecord, SyncRecord } from "./types.ts";
+import type { ClientRecord, SyncRecord } from "./types.ts";
 
 /** pg returns bigint columns as strings; SQLite and PGlite can return numbers. */
 export type StoredInteger = number | string | bigint;
@@ -15,16 +15,16 @@ export interface ClientsTable {
   payment_day: string;
   subject_template: string;
   line_grouping: ClientRecord["lineGrouping"];
-  solidtime_client_id: string | null;
+  archived: number;
   drive_folder_id: string | null;
 }
 
 export interface ProjectsTable {
   id: string;
-  client_id: string;
+  client_id: string | null;
   name: string;
-  status: ProjectRecord["status"];
-  solidtime_project_id: string | null;
+  archived: number;
+  hourly_rate: number | null;
   drive_folder_id: string | null;
 }
 
@@ -34,7 +34,6 @@ export interface ContractsTable {
   name: string;
   start_date: string;
   end_date: string | null;
-  hourly_rate: Integer;
   min_seconds: NullableInteger;
   max_seconds: NullableInteger;
   has_hours_range: number;
@@ -46,7 +45,6 @@ export interface ContractProjectsTable {
   contract_id: string;
   project_id: string;
   position: number;
-  hourly_rate: NullableInteger;
   min_seconds: NullableInteger;
   max_seconds: NullableInteger;
   has_hours_range: number;

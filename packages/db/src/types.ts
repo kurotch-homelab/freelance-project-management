@@ -6,16 +6,16 @@ export interface ClientRecord {
   readonly paymentTerms: PaymentTerms;
   readonly subjectTemplate: string;
   readonly lineGrouping: "project" | "contract";
-  readonly solidtimeClientId: string | null;
+  readonly archived: boolean;
   readonly driveFolderId: string | null;
 }
 
 export interface ProjectRecord {
   readonly id: string;
-  readonly clientId: string;
+  readonly clientId: string | null;
   readonly name: string;
-  readonly status: "proposed" | "won" | "active" | "completed" | "lost";
-  readonly solidtimeProjectId: string | null;
+  readonly archived: boolean;
+  readonly hourlyRate: number | null;
   readonly driveFolderId: string | null;
 }
 
@@ -71,13 +71,21 @@ export interface SyncStatus {
   readonly lastFailure: { readonly at: string; readonly error: string | null } | null;
 }
 
+export type ClientBilling = Pick<ClientRecord, "paymentTerms" | "subjectTemplate" | "lineGrouping">;
+export interface SolidtimeCatalog {
+  readonly clients: readonly Pick<ClientRecord, "id" | "name" | "archived">[];
+  readonly projects: readonly Omit<ProjectRecord, "driveFolderId">[];
+}
+
 export interface Repository {
-  saveClient(client: ClientRecord): Promise<void>;
+  syncSolidtimeCatalog(catalog: SolidtimeCatalog): Promise<void>;
+  replaceSolidtimeData(catalog: SolidtimeCatalog, period: DateRange, entries: readonly TimeEntryRecord[]): Promise<void>;
+  updateClientBilling(id: string, billing: ClientBilling): Promise<void>;
+  setClientDriveFolder(id: string, folderId: string): Promise<void>;
+  setProjectDriveFolder(id: string, folderId: string): Promise<void>;
   getClient(id: string): Promise<ClientRecord | null>;
   listClients(): Promise<ClientRecord[]>;
-  saveProject(project: ProjectRecord): Promise<void>;
-  listProjects(filter?: ClientFilter): Promise<ProjectRecord[]>;
-  findProjectBySolidtimeId(id: string): Promise<ProjectRecord | null>;
+  listProjects(filter?: ClientFilter & { readonly includeArchived?: boolean }): Promise<ProjectRecord[]>;
   saveContract(contract: Contract): Promise<void>;
   listContracts(filter?: ClientFilter): Promise<Contract[]>;
   saveHoursRangeOverride(override: HoursRangeOverrideRecord): Promise<void>;

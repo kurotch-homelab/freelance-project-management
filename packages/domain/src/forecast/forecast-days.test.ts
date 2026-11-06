@@ -27,8 +27,7 @@ const contract = (over: Partial<Contract> & Pick<Contract, "id" | "projectIds">)
   name: "業務委託契約",
   start: "2026-01-01",
   end: null,
-  hourlyRate: 5_000,
-  projectRates: {},
+
   renewalOutlook: "undecided",
   ...over,
 });
@@ -36,7 +35,7 @@ const contract = (over: Partial<Contract> & Pick<Contract, "id" | "projectIds">)
 /** contracts を省略すると、取引先ごとに、その取引先の全案件を含む終了日なしの契約を 1 つずつ置く */
 const input = (over: Partial<ForecastInput>): ForecastInput => {
   const projects = over.projects ?? [];
-  const clientIds = [...new Set(projects.map((p) => p.clientId))];
+  const clientIds = [...new Set(projects.flatMap((p) => p.clientId === null ? [] : [p.clientId]))];
   return {
     asOf,
     until: NEXT_MON,
@@ -389,5 +388,28 @@ describe("forecastDays: 案件ごと・日ごとの稼働予測", () => {
         ),
       ).toThrow(RangeError);
     });
+  });
+});
+
+describe("アーカイブした案件の予測", () => {
+  it("更新見込みが高くても行を生成せず、同じ取引先の新案件の実績に使う", () => {
+    const rows = forecastDays(input({
+      projects: [
+        project({ projectId: "OLD", archived: true, history: mondays(4 * HOUR) }),
+        project({ projectId: "NEW" }),
+      ],
+      contracts: [contract({ id: "c", projectIds: ["OLD", "NEW"], end: "2026-11-01", renewalOutlook: "likely" })],
+    }));
+    expect(rows).toEqual([{ date: NEXT_MON, projectId: "NEW", seconds: 4 * HOUR, source: "client", assumesRenewal: true }]);
+  });
+
+  it("取引先なしのアーカイブ案件の実績も全体の稼働の空きに使う", () => {
+    const rows = forecastDays(input({
+      projects: [
+        project({ projectId: "OLD", clientId: null, archived: true, history: mondays(8 * HOUR) }),
+        project({ projectId: "NEW", clientId: "new-client" }),
+      ],
+    }));
+    expect(rows).toEqual([{ date: NEXT_MON, projectId: "NEW", seconds: 8 * HOUR, source: "capacity", assumesRenewal: false }]);
   });
 });

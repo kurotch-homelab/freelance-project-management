@@ -22,7 +22,7 @@ const clientA: ClientRecord = {
   paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" },
   subjectTemplate: "{YYYY}年{M}月分 業務委託料",
   lineGrouping: "project",
-  solidtimeClientId: "st-client-a",
+  archived: false,
   driveFolderId: null,
 };
 
@@ -30,11 +30,11 @@ const projectX: ProjectRecord = {
   id: "X",
   clientId: "client-a",
   name: "案件 X",
-  status: "active",
-  solidtimeProjectId: "st-x",
+  archived: false,
+  hourlyRate: 5_000,
   driveFolderId: null,
 };
-const projectY: ProjectRecord = { ...projectX, id: "Y", name: "案件 Y", solidtimeProjectId: "st-y" };
+const projectY: ProjectRecord = { ...projectX, id: "Y", name: "案件 Y", hourlyRate: 7_000 };
 
 const contract1: Contract = {
   id: "c1",
@@ -42,9 +42,8 @@ const contract1: Contract = {
   name: "業務委託契約",
   start: "2026-10-01",
   end: "2026-12-31",
-  hourlyRate: 5_000,
   projectIds: ["X", "Y"],
-  projectRates: { Y: 7_000 },
+
   hoursRange: { minHours: 140, maxHours: 180 },
   projectHoursRanges: { Y: { maxHours: 30.5 } },
   renewalOutlook: "likely",
@@ -70,29 +69,34 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
     });
   });
 
-  describe("取引先", () => {
-    it("保存して読み戻す(支払条件・明細行の分け方も)", async () => {
-      await repo.saveClient(clientA);
+  describe("solidtime カタログと請求設定", () => {
+    it("取り込み時に請求設定を初期化し、次の同期では請求設定と Drive を保持する", async () => {
+      await repo.syncSolidtimeCatalog({ clients: [clientA], projects: [projectX, projectY] });
       await expect(repo.getClient("client-a")).resolves.toEqual(clientA);
+      const billing = { ...clientA, paymentTerms: { closingDay: 31, paymentMonthOffset: 2, paymentDay: 30 }, lineGrouping: "contract" as const };
+      await repo.updateClientBilling("client-a", billing);
+      await repo.setClientDriveFolder("client-a", "client-folder");
+      await repo.setProjectDriveFolder("X", "project-folder");
+      await repo.syncSolidtimeCatalog({ clients: [{ ...clientA, name: "A 株式会社" }], projects: [{ ...projectX, name: "案件 新", hourlyRate: 6500.25 }] });
+      await expect(repo.getClient("client-a")).resolves.toEqual({ ...billing, name: "A 株式会社", driveFolderId: "client-folder" });
+      await expect(repo.listProjects()).resolves.toEqual([{ ...projectX, name: "案件 新", hourlyRate: 6500.25, driveFolderId: "project-folder" }]);
+      expect((await repo.listProjects({ includeArchived: true })).find((p) => p.id === "Y")).toEqual({ ...projectY, archived: true });
     });
 
-    it("同じ id で保存すると上書きする", async () => {
-      await repo.saveClient(clientA);
-      await repo.saveClient({ ...clientA, name: "A 株式会社", paymentTerms: { closingDay: 20, paymentMonthOffset: 2, paymentDay: 10 } });
-      await expect(repo.getClient("client-a")).resolves.toMatchObject({
-        name: "A 株式会社",
-        paymentTerms: { closingDay: 20, paymentMonthOffset: 2, paymentDay: 10 },
+    it("名前順で返し、取引先とアーカイブで絞り込む", async () => {
+      await repo.syncSolidtimeCatalog({
+        clients: [{ ...clientA, id: "b", name: "B 社" }, clientA],
+        projects: [projectY, projectX, { ...projectX, id: "old", name: "終了案件", archived: true }],
       });
+      expect((await repo.listClients()).map((c) => c.name)).toEqual(["A 社", "B 社"]);
+      await expect(repo.listProjects()).resolves.toEqual([projectX, projectY]);
+      await expect(repo.listProjects({ clientId: "client-a", includeArchived: true })).resolves.toHaveLength(3);
+      await expect(repo.listProjects({ clientId: "other", includeArchived: true })).resolves.toEqual([]);
     });
 
-    it("一覧は名前の順", async () => {
-      await repo.saveClient({ ...clientA, id: "b", name: "B 社" });
-      await repo.saveClient(clientA);
-      await expect(repo.listClients().then((cs) => cs.map((c) => c.name))).resolves.toEqual(["A 社", "B 社"]);
-    });
-
-    it("ないときは null", async () => {
+    it("存在しない取引先は取得できず、請求設定も更新できない", async () => {
       await expect(repo.getClient("nope")).resolves.toBeNull();
+      await expect(repo.updateClientBilling("nope", clientA)).rejects.toThrow(RangeError);
     });
 
     it.each([
@@ -101,58 +105,60 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
       { closingDay: "end", paymentMonthOffset: -1, paymentDay: "end" },
       { closingDay: "end", paymentMonthOffset: 1, paymentDay: 32 },
     ] as const)("不正な支払条件 %o は保存しない", async (paymentTerms) => {
-      await expect(repo.saveClient({ ...clientA, paymentTerms })).rejects.toThrow(RangeError);
-      await expect(repo.getClient("client-a")).resolves.toBeNull();
-    });
-  });
-
-  describe("案件", () => {
-    beforeEach(async () => {
-      await repo.saveClient(clientA);
+      await repo.syncSolidtimeCatalog({ clients: [clientA], projects: [] });
+      await expect(repo.updateClientBilling("client-a", { ...clientA, paymentTerms })).rejects.toThrow(RangeError);
+      await expect(repo.getClient("client-a")).resolves.toEqual(clientA);
     });
 
-    it("保存して読み戻す。取引先で絞り込める", async () => {
-      await repo.saveProject(projectX);
-      await repo.saveProject(projectY);
-      await expect(repo.listProjects()).resolves.toEqual([projectX, projectY]);
-      await expect(repo.listProjects({ clientId: "client-a" })).resolves.toHaveLength(2);
-      await expect(repo.listProjects({ clientId: "other" })).resolves.toEqual([]);
+    it("solidtime から消えた取引先・案件をアーカイブし、再登場したら復帰する", async () => {
+      const catalog = { clients: [clientA], projects: [projectX] };
+      await repo.syncSolidtimeCatalog(catalog);
+      await repo.syncSolidtimeCatalog({ clients: [], projects: [] });
+      await expect(repo.getClient("client-a")).resolves.toEqual({ ...clientA, archived: true });
+      await expect(repo.listProjects()).resolves.toEqual([]);
+      await expect(repo.listProjects({ includeArchived: true })).resolves.toEqual([{ ...projectX, archived: true }]);
+      await repo.syncSolidtimeCatalog(catalog);
+      await expect(repo.listProjects()).resolves.toEqual([projectX]);
     });
 
-    it("solidtime のプロジェクト ID から引ける", async () => {
-      await repo.saveProject(projectX);
-      await expect(repo.findProjectBySolidtimeId("st-x")).resolves.toEqual(projectX);
-      await expect(repo.findProjectBySolidtimeId("nope")).resolves.toBeNull();
+    it("案件の取引先は契約の有無にかかわらず solidtime の変更に従う", async () => {
+      const clients = [clientA, { ...clientA, id: "client-b", name: "B 社" }];
+      await repo.syncSolidtimeCatalog({ clients, projects: [projectX] });
+      await repo.saveContract({ ...contract1, projectIds: ["X"], projectHoursRanges: {} });
+      await repo.syncSolidtimeCatalog({ clients, projects: [{ ...projectX, clientId: "client-b" }] });
+      await expect(repo.listProjects({ clientId: "client-b" })).resolves.toEqual([{ ...projectX, clientId: "client-b" }]);
+      await expect(repo.listContracts()).resolves.toHaveLength(1);
     });
 
-    it("契約に入っている案件の取引先は変えられない", async () => {
-      await repo.saveClient({ ...clientA, id: "client-b", name: "B 社" });
-      await repo.saveProject(projectX);
-      await repo.saveContract({ ...contract1, projectIds: ["X"], projectRates: {}, projectHoursRanges: {} });
-      await expect(repo.saveProject({ ...projectX, clientId: "client-b" })).rejects.toThrow(RangeError);
-      await expect(repo.listProjects({ clientId: "client-a" })).resolves.toEqual([projectX]);
+    it("取引先なしと単価なしの案件も取り込む", async () => {
+      await repo.syncSolidtimeCatalog({ clients: [], projects: [{ ...projectX, clientId: null, hourlyRate: null }] });
+      await expect(repo.listProjects()).resolves.toEqual([{ ...projectX, clientId: null, hourlyRate: null }]);
     });
 
-    it("契約に入っていない案件なら取引先を変えられる", async () => {
-      await repo.saveClient({ ...clientA, id: "client-b", name: "B 社" });
-      await repo.saveProject(projectX);
-      await repo.saveProject({ ...projectX, clientId: "client-b" });
-      await expect(repo.listProjects({ clientId: "client-b" })).resolves.toHaveLength(1);
+    it("カタログ途中で失敗したら、既存のカタログを変更しない", async () => {
+      await repo.syncSolidtimeCatalog({ clients: [clientA], projects: [projectX] });
+      await expect(repo.syncSolidtimeCatalog({ clients: [], projects: [{ ...projectX, clientId: "nope" }] })).rejects.toThrow();
+      await expect(repo.getClient("client-a")).resolves.toEqual(clientA);
+      await expect(repo.listProjects()).resolves.toEqual([projectX]);
     });
 
-    it("存在しない取引先の案件は保存できない", async () => {
-      await expect(repo.saveProject({ ...projectX, clientId: "nope" })).rejects.toThrow();
+    it("打刻の保存失敗でも、カタログと前回の打刻をまとめて戻す", async () => {
+      const period = { from: "2026-11-01", to: "2026-11-30" };
+      const entry = { id: "e1", solidtimeProjectId: "X", date: "2026-11-01", seconds: 3600, billable: true };
+      await repo.replaceSolidtimeData({ clients: [clientA], projects: [projectX] }, period, [entry]);
+      await expect(repo.replaceSolidtimeData({ clients: [], projects: [] }, period, [entry, entry])).rejects.toThrow();
+      await expect(repo.getClient("client-a")).resolves.toEqual(clientA);
+      await expect(repo.listProjects()).resolves.toEqual([projectX]);
+      await expect(repo.listDailyWork(period)).resolves.toEqual([{ projectId: "X", date: "2026-11-01", seconds: 3600 }]);
     });
   });
 
   describe("契約", () => {
     beforeEach(async () => {
-      await repo.saveClient(clientA);
-      await repo.saveProject(projectX);
-      await repo.saveProject(projectY);
+      await repo.syncSolidtimeCatalog({ clients: [clientA], projects: [projectX, projectY] });
     });
 
-    it("対象の案件・単価の上書き・目安時間(小数も)を含めて保存して読み戻す", async () => {
+    it("対象の案件・目安時間(小数も)を含めて保存して読み戻す", async () => {
       await repo.saveContract(contract1);
       await expect(repo.listContracts()).resolves.toEqual([contract1]);
     });
@@ -164,9 +170,8 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
         name: "業務委託契約",
         start: "2027-01-01",
         end: null,
-        hourlyRate: 6_000,
         projectIds: ["X"],
-        projectRates: {},
+
         renewalOutlook: "undecided",
       };
       await repo.saveContract(open);
@@ -175,9 +180,9 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
 
     it("保存し直すと、対象の案件や上書きも入れ替わる", async () => {
       await repo.saveContract(contract1);
-      await repo.saveContract({ ...contract1, projectIds: ["X"], projectRates: {}, projectHoursRanges: {} });
+      await repo.saveContract({ ...contract1, projectIds: ["X"], projectHoursRanges: {} });
       const [c] = await repo.listContracts();
-      expect(c).toMatchObject({ projectIds: ["X"], projectRates: {} });
+      expect(c).toMatchObject({ projectIds: ["X"] });
       expect(c?.projectHoursRanges ?? {}).toEqual({});
     });
 
@@ -216,13 +221,12 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
 
   describe("稼働(solidtime から取り込んだ打刻)", () => {
     beforeEach(async () => {
-      await repo.saveClient(clientA);
-      await repo.saveProject(projectX);
+      await repo.syncSolidtimeCatalog({ clients: [clientA], projects: [projectX] });
     });
 
     const entry = (id: string, date: string, seconds: number, billable = true) => ({
       id,
-      solidtimeProjectId: "st-x",
+      solidtimeProjectId: "X",
       date,
       seconds,
       billable,
@@ -258,6 +262,21 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
       await expect(repo.listDailyWork({ from: "2026-11-01", to: "2026-11-30" })).resolves.toEqual([]);
       await expect(repo.listUnlinkedSolidtimeProjects({ from: "2026-11-01", to: "2026-11-30" })).resolves.toEqual([
         { solidtimeProjectId: "unknown", seconds: 3_600 },
+      ]);
+    });
+
+    it("プロジェクトなし・未取り込みだけを未連携とし、アーカイブ済みの実績は集計する", async () => {
+      const period = { from: "2026-11-01", to: "2026-11-30" };
+      await repo.syncSolidtimeCatalog({ clients: [clientA], projects: [{ ...projectX, archived: true }] });
+      await repo.replaceTimeEntries(period, [
+        entry("a", "2026-11-01", 3600),
+        { ...entry("b", "2026-11-01", 1800), solidtimeProjectId: null },
+        { ...entry("c", "2026-11-01", 900), solidtimeProjectId: "unknown" },
+        { ...entry("d", "2026-11-01", 600, false), solidtimeProjectId: null },
+      ]);
+      await expect(repo.listDailyWork(period)).resolves.toEqual([{ projectId: "X", date: "2026-11-01", seconds: 3600 }]);
+      await expect(repo.listUnlinkedSolidtimeProjects(period)).resolves.toEqual([
+        { solidtimeProjectId: null, seconds: 1800 }, { solidtimeProjectId: "unknown", seconds: 900 },
       ]);
     });
 

@@ -1,5 +1,5 @@
 import { summarizeInvoice, type InvoiceSummary } from "./billing.ts";
-import { contractCoverage, rateFor, validateContracts, type Contract } from "./contracts.ts";
+import { contractCoverage, validateContracts, type Contract } from "./contracts.ts";
 import { parseDate } from "./date.ts";
 import type { ForecastRow } from "./forecast/forecast-days.ts";
 import {
@@ -19,6 +19,7 @@ export interface MonthOutlookInput {
   readonly month: string;
   readonly asOf: string;
   readonly contracts: readonly Contract[];
+  readonly projects: readonly { readonly id: string; readonly hourlyRate: number | null }[];
   readonly actual: readonly {
     readonly projectId: string;
     readonly date: string;
@@ -182,10 +183,10 @@ export function monthOutlook(input: MonthOutlookInput): readonly MonthOutlook[] 
     });
     const actualSeconds = projects.reduce((sum, project) => addSeconds(sum, project.actualSeconds), 0);
     const forecastSeconds = projects.reduce((sum, project) => addSeconds(sum, project.forecastSeconds), 0);
-    const { subtotal, tax, total } = summarizeInvoice(projects.map((project) => ({
-      seconds: project.landingSeconds,
-      hourlyRate: rateFor(contract, project.projectId),
-    })));
+    const { subtotal, tax, total } = summarizeInvoice(projects.flatMap((project) => {
+      const hourlyRate = input.projects.find((p) => p.id === project.projectId)?.hourlyRate ?? null;
+      return hourlyRate === null ? [] : [{ seconds: project.landingSeconds, hourlyRate }];
+    }));
     return {
       contractId: contract.id,
       contractName: contract.name,

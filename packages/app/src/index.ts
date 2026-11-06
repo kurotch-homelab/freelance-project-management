@@ -1,10 +1,9 @@
-import type { Repository, SyncSource } from "@fpm/db";
+import type { ClientBilling, Repository, SyncSource } from "@fpm/db";
 import {
   contractCoverage,
   forecastDays,
   invoiceGuide as buildInvoiceGuide,
   monthOutlook,
-  rateFor,
 } from "@fpm/domain";
 import {
   absenceSecondsByDay,
@@ -17,10 +16,7 @@ import { addDays, dateInTimeZone, forecastPeriods, monthPeriod } from "./dates.t
 
 export interface AppDeps {
   readonly repo: Repository;
-  readonly solidtime: Pick<SolidtimeClient, "listTimeEntries"> & {
-    // 単価更新のレスポンスは使わない。実クライアントと最小のフェイクを受け取る。
-    setProjectRate(...args: Parameters<SolidtimeClient["setProjectRate"]>): Promise<unknown>;
-  };
+  readonly solidtime: Pick<SolidtimeClient, "listTimeEntries" | "listClients" | "listProjectsWithRates">;
   readonly calendar: Pick<CalendarClient, "listOutOfOffice">;
   readonly drive: Pick<DriveClient, "ensureFolder" | "uploadFile" | "listFiles">;
   readonly clock: { now(): Date };
@@ -36,14 +32,6 @@ type SyncResult<T> = ({ readonly ok: true } & T) | { readonly ok: false; readonl
 
 // Share locks across app instances in this process; each source runs independently.
 const syncingSources = new Set<SyncSource>();
-
-interface RatePushResult {
-  readonly pushed: { projectId: string; hourlyRate: number }[];
-  readonly skipped: (
-    | { projectId: null; reason: "notActiveToday" }
-    | { projectId: string; reason: "noSolidtimeProject" }
-  )[];
-}
 
 export function createApp({ repo, solidtime, calendar, drive, clock, config }: AppDeps) {
   const today = () => dateInTimeZone(clock.now(), config.timeZone);
@@ -74,20 +62,21 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
   }
 
   async function ensureProjectFolder(projectId: string): Promise<{ folderId: string }> {
-    const project = (await repo.listProjects()).find((candidate) => candidate.id === projectId);
+    const project = (await repo.listProjects({ includeArchived: true })).find((candidate) => candidate.id === projectId);
     if (!project) throw new RangeError(`Project not found: ${projectId}`);
     if (project.driveFolderId !== null) return { folderId: project.driveFolderId };
 
+    if (project.clientId === null) throw new RangeError(`Project has no client: ${projectId}`);
     const client = await repo.getClient(project.clientId);
     if (!client) throw new RangeError(`Client not found: ${project.clientId}`);
     let clientFolderId = client.driveFolderId;
     if (clientFolderId === null) {
       const folder = await drive.ensureFolder({ parentId: config.driveRootFolderId, name: client.name });
       clientFolderId = folder.id;
-      await repo.saveClient({ ...client, driveFolderId: clientFolderId });
+      await repo.setClientDriveFolder(client.id, clientFolderId);
     }
     const folder = await drive.ensureFolder({ parentId: clientFolderId, name: project.name });
-    await repo.saveProject({ ...project, driveFolderId: folder.id });
+    await repo.setProjectDriveFolder(project.id, folder.id);
     return { folderId: folder.id };
   }
 
@@ -98,8 +87,15 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
         const monthStart = `${asOf.slice(0, 7)}-01`;
         const start = historyStart(asOf);
         const period = { from: start < monthStart ? start : monthStart, to: asOf };
+        const clients = await solidtime.listClients();
+        const projects = await solidtime.listProjectsWithRates();
         const entries = await solidtime.listTimeEntries(period);
-        await repo.replaceTimeEntries(period, entries.map((entry) => ({
+        await repo.replaceSolidtimeData({
+          clients: clients.map(({ id, name, isArchived }) => ({ id, name, archived: isArchived })),
+          projects: projects.map(({ id, clientId, name, isArchived, hourlyRate }) => ({
+            id, clientId, name, archived: isArchived, hourlyRate,
+          })),
+        }, period, entries.map((entry) => ({
           id: entry.id,
           solidtimeProjectId: entry.projectId,
           date: entry.date,
@@ -128,31 +124,8 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
       });
     },
 
-    async pushRates(contractId: string): Promise<RatePushResult> {
-      const contracts = await repo.listContracts();
-      const contract = contracts.find((candidate) => candidate.id === contractId);
-      if (!contract) throw new RangeError(`Contract not found: ${contractId}`);
-      const asOf = today();
-      if (!contract.projectIds.every((projectId) =>
-        contractCoverage(contracts, projectId, asOf)?.contract.id === contractId,
-      )) {
-        return { pushed: [], skipped: [{ projectId: null, reason: "notActiveToday" }] };
-      }
-
-      const projects = new Map((await repo.listProjects({ clientId: contract.clientId }))
-        .map((project) => [project.id, project]));
-      const result: RatePushResult = { pushed: [], skipped: [] };
-      for (const projectId of contract.projectIds) {
-        const solidtimeProjectId = projects.get(projectId)?.solidtimeProjectId;
-        if (solidtimeProjectId == null) {
-          result.skipped.push({ projectId, reason: "noSolidtimeProject" });
-          continue;
-        }
-        const hourlyRate = rateFor(contract, projectId);
-        await solidtime.setProjectRate(solidtimeProjectId, hourlyRate);
-        result.pushed.push({ projectId, hourlyRate });
-      }
-      return result;
+    async updateClientBilling(clientId: string, billing: ClientBilling) {
+      await repo.updateClientBilling(clientId, billing);
     },
 
     async dashboard() {
@@ -161,7 +134,7 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
       const until = periods.at(-1)!.to;
       const previousMonthStart = `${addDays(`${asOf.slice(0, 7)}-01`, -1).slice(0, 7)}-01`;
       const [projects, contracts, history, absenceSeconds, solidtimeStatus, calendarStatus, unlinked] = await Promise.all([
-        repo.listProjects(),
+        repo.listProjects({ includeArchived: true }),
         repo.listContracts(),
         repo.listDailyWork({ from: historyStart(asOf), to: asOf }),
         repo.listAbsences({ from: asOf, to: until }),
@@ -176,6 +149,7 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
         projects: projects.map((project) => ({
           projectId: project.id,
           clientId: project.clientId,
+          archived: project.archived,
           history: history.filter((work) => work.projectId === project.id),
         })),
         contracts,
@@ -188,13 +162,18 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
         ]);
         return {
           month,
-          contracts: monthOutlook({ month, asOf, contracts, actual, forecast, hoursRangeOverrides }),
+          contracts: monthOutlook({ month, asOf, contracts, projects, actual: actual.filter((work) => {
+            const coverage = contractCoverage(contracts, work.projectId, work.date);
+            return coverage !== null && !coverage.assumesRenewal;
+          }), forecast, hoursRangeOverrides }),
         };
       }));
       return {
         asOf,
         projectNames: Object.fromEntries(projects.map((project) => [project.id, project.name])),
         unlinked,
+        projectsWithoutClient: projects.filter((p) => !p.archived && p.clientId === null).map(({ id, name }) => ({ id, name })),
+        projectsWithoutRate: projects.filter((p) => !p.archived && p.hourlyRate === null).map(({ id, name }) => ({ id, name })),
         months,
         sync: { solidtime: solidtimeStatus, calendar: calendarStatus },
       };
@@ -205,7 +184,7 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
       if (!client) throw new RangeError(`Client not found: ${clientId}`);
       const [contracts, projects, work] = await Promise.all([
         repo.listContracts({ clientId }),
-        repo.listProjects({ clientId }),
+        repo.listProjects({ clientId, includeArchived: true }),
         repo.listDailyWork(monthPeriod(month)),
       ]);
       return buildInvoiceGuide({

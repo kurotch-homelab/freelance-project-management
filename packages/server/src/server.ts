@@ -52,7 +52,13 @@ export async function buildServer(config: Config, deps: ServerDeps = {}) {
     const calendar = d.createCalendarClient({ getAccessToken, calendarId: config.google.calendarId });
     const drive = d.createDriveClient({ getAccessToken, driveId: config.google.driveId });
     const useCases = d.createApp({
-      repo, solidtime, calendar, drive, clock: d.clock,
+      repo,
+      solidtime: {
+        listClients: () => solidtime.listClients(),
+        listProjectsWithRates: () => solidtime.listProjectsWithRates(),
+        listTimeEntries: (period) => solidtime.listTimeEntries(period),
+      },
+      calendar, drive, clock: d.clock,
       config: {
         timeZone: config.timeZone,
         forecastWeeks: config.forecast.weeks,

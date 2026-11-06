@@ -125,6 +125,8 @@ kubectl -n YOUR_NAMESPACE port-forward service/fpm 3000:80
 
 ### Google の WIF
 
+`GOOGLE_CLOUD_PROJECT` に Google Cloud のプロジェクト ID (プロジェクト番号ではない)を設定する。`deploy/kubernetes/base/config.env` と `.env.example` の `example-project-id` を置き換える。WIF では未設定だと `google-auth-library` がプロジェクト ID を自動探索し、Calendar・Drive 用のスコープだけでは失敗するため、必ず明示する。
+
 この構成では Kubernetes の ServiceAccount トークンを Google STS で交換し、Google のサービスアカウントを impersonate する。そのアカウントへ Calendar / Drive を共有する。Google Workspace ユーザーの代理アクセスやドメイン全体の委任とは別の仕組みになる。
 
 設定は次の順で進める。

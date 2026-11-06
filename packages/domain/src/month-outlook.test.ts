@@ -15,9 +15,8 @@ const contract = (over: Partial<Contract> = {}): Contract => ({
   name: "業務委託契約",
   start: "2026-01-01",
   end: null,
-  hourlyRate: 5_000,
   projectIds: ["X", "Y"],
-  projectRates: {},
+
   renewalOutlook: "undecided",
   hoursRange: { minHours: 140, maxHours: 180 },
   projectHoursRanges: {},
@@ -34,6 +33,7 @@ const row = (projectId: string, date: string, seconds: number, assumesRenewal = 
 
 const outlookFor = (over: Partial<MonthOutlookInput>) =>
   monthOutlook({
+    projects: [{ id: "X", hourlyRate: 5_000 }, { id: "Y", hourlyRate: 5_000 }],
     month,
     asOf,
     contracts: [contract()],
@@ -124,9 +124,10 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
     expect(c).toMatchObject({ actualSeconds: 1 * HOUR, forecastSeconds: 2 * HOUR });
   });
 
-  it("請求見込み額は案件ごとの単価の上書きを使う: Y だけ 7,000 円", () => {
+  it("請求見込み額は案件ごとの今の単価を使う: Y だけ 7,000 円", () => {
     const [c] = outlookFor({
-      contracts: [contract({ hoursRange: {}, projectRates: { Y: 7_000 } })],
+      projects: [{ id: "X", hourlyRate: 5_000 }, { id: "Y", hourlyRate: 7_000 }],
+      contracts: [contract({ hoursRange: {} })],
       actual: [
         { projectId: "X", date: "2026-11-10", seconds: 10 * HOUR },
         { projectId: "Y", date: "2026-11-10", seconds: 10 * HOUR },
@@ -139,14 +140,14 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
     const outlooks = outlookFor({
       contracts: [
         contract({ id: "c1", end: "2026-11-15", hoursRange: {} }),
-        contract({ id: "c2", start: "2026-11-16", hourlyRate: 6_000, hoursRange: {} }),
+        contract({ id: "c2", start: "2026-11-16", hoursRange: {} }),
       ],
       actual: [{ projectId: "X", date: "2026-11-10", seconds: 10 * HOUR }],
       forecast: [row("X", "2026-11-20", 5 * HOUR)],
     });
     expect(outlooks.map((o) => [o.contractId, o.landingSeconds, o.estimate.subtotal])).toEqual([
       ["c1", 10 * HOUR, 50_000],
-      ["c2", 5 * HOUR, 30_000],
+      ["c2", 5 * HOUR, 25_000],
     ]);
   });
 
@@ -160,6 +161,7 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
 
   it("更新見込みが「高い」契約は、終了した月より後の月にも更新前提として出す", () => {
     const outlooks = monthOutlook({
+      projects: [{ id: "X", hourlyRate: 5_000 }, { id: "Y", hourlyRate: 5_000 }],
       month: "2026-12",
       asOf,
       contracts: [contract({ end: "2026-11-30", renewalOutlook: "likely", hoursRange: {} })],
@@ -174,6 +176,7 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
 
   it("更新見込みが「高い」契約でも、あとに次の契約があれば、終了後の月には出さない", () => {
     const outlooks = monthOutlook({
+      projects: [{ id: "X", hourlyRate: 5_000 }, { id: "Y", hourlyRate: 5_000 }],
       month: "2026-12",
       asOf,
       contracts: [
@@ -190,6 +193,7 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
   it.each(["undecided", "ending"] as const)("更新見込みが %s の契約は、終了後の月には出さない", (outlook) => {
     expect(
       monthOutlook({
+        projects: [{ id: "X", hourlyRate: 5_000 }, { id: "Y", hourlyRate: 5_000 }],
         month: "2026-12",
         asOf,
         contracts: [contract({ end: "2026-11-30", renewalOutlook: outlook })],
@@ -233,5 +237,18 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
         hoursRangeOverrides: [{ contractId: "nope", projectId: null, month, range: {}, note: "" }],
       }),
     ).toThrow(RangeError);
+  });
+});
+
+it("単価なしの実績と予測も時間と目安時間の警告には含め、金額だけ除外する", () => {
+  const [c] = outlookFor({
+    projects: [{ id: "X", hourlyRate: 5000 }, { id: "Y", hourlyRate: null }],
+    actual: [{ projectId: "X", date: "2026-11-01", seconds: HOUR }, { projectId: "Y", date: "2026-11-01", seconds: 2 * HOUR }],
+    forecast: [row("Y", "2026-11-20", 3 * HOUR)],
+  });
+  expect(c).toMatchObject({
+    actualSeconds: 3 * HOUR, forecastSeconds: 3 * HOUR, landingSeconds: 6 * HOUR,
+    estimate: { subtotal: 5000, tax: 500, total: 5500 },
+    warnings: [{ kind: "belowMinForecast", seconds: 134 * HOUR }],
   });
 });

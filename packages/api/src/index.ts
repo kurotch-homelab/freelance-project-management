@@ -3,11 +3,10 @@ import type { Repository } from "@fpm/db";
 import { Hono, type HonoRequest, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import {
-  parseClient,
+  parseClientBilling,
   parseContract,
   parseHoursRangeOverride,
   parseMonth,
-  parseProject,
 } from "./validation.ts";
 
 export interface ApiDeps {
@@ -57,37 +56,30 @@ export function createApi({ repo, app, auth }: ApiDeps) {
     const client = await repo.getClient(c.req.param("id"));
     return client === null ? c.json({ error: "client not found" }, 404) : c.json(client);
   });
-  api.put("/api/clients/:id", async (c) => {
-    const client = parseClient(await readJson(c.req));
-    assertId(c.req.param("id"), client.id);
-    await repo.saveClient(client);
+  api.put("/api/clients/:id/billing", async (c) => {
+    const billing = parseClientBilling(await readJson(c.req));
+    try {
+      await app.updateClientBilling(c.req.param("id"), billing);
+    } catch (error) {
+      if (error instanceof RangeError && error.message.startsWith("Client not found:")) {
+        return c.json({ error: error.message }, 404);
+      }
+      throw error;
+    }
     return c.json({ ok: true });
   });
 
-  api.get("/api/projects", async (c) => c.json(await repo.listProjects(clientFilter(c.req))));
-  api.put("/api/projects/:id", async (c) => {
-    const project = parseProject(await readJson(c.req));
-    assertId(c.req.param("id"), project.id);
-    await repo.saveProject(project);
-    return c.json({ ok: true });
-  });
+  api.get("/api/projects", async (c) => c.json(await repo.listProjects({
+    ...clientFilter(c.req), includeArchived: c.req.query("includeArchived") === "true",
+  })));
 
   api.get("/api/contracts", async (c) => c.json(await repo.listContracts(clientFilter(c.req))));
   api.put("/api/contracts/:id", async (c) => {
     const contract = parseContract(await readJson(c.req));
     assertId(c.req.param("id"), contract.id);
     await repo.saveContract(contract);
-    try {
-      const result = await app.pushRates(contract.id);
-      return c.json({ ok: true, pushRates: { ok: true, ...result } });
-    } catch (error) {
-      return c.json({ ok: true, pushRates: {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      } });
-    }
+    return c.json({ ok: true });
   });
-  api.post("/api/contracts/:id/push-rates", async (c) => c.json(await app.pushRates(c.req.param("id"))));
 
   api.post("/api/hours-range-overrides", async (c) => {
     const override = parseHoursRangeOverride(await readJson(c.req));

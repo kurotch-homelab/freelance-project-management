@@ -9,7 +9,7 @@ const clientA = {
   paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" },
   subjectTemplate: "{YYYY}年{M}月分 業務委託料",
   lineGrouping: "project",
-  solidtimeClientId: null,
+  archived: false,
   driveFolderId: null,
 };
 
@@ -17,8 +17,8 @@ const projectX = {
   id: "X",
   clientId: "client-a",
   name: "案件 X",
-  status: "active",
-  solidtimeProjectId: "st-x",
+  archived: false,
+  hourlyRate: 5_000,
   driveFolderId: null,
 };
 
@@ -28,9 +28,8 @@ const contract1 = {
   name: "業務委託契約",
   start: "2026-01-01",
   end: null,
-  hourlyRate: 5_000,
   projectIds: ["X"],
-  projectRates: {},
+
   hoursRange: { minHours: 140, maxHours: 180 },
   renewalOutlook: "undecided",
 };
@@ -61,13 +60,14 @@ describe("createApi: HTTP API", () => {
     useCases = {
       syncSolidtime: vi.fn(async () => ({ ok: true as const, unlinked: [] })),
       syncCalendar: vi.fn(async () => ({ ok: true as const })),
-      pushRates: vi.fn(async () => ({ pushed: [], skipped: [] })),
+      updateClientBilling: vi.fn((id, billing) => repo.updateClientBilling(id, billing)),
       dashboard: vi.fn(async () => ({ asOf: "2026-11-15", months: [], sync: {} })),
       invoiceGuide: vi.fn(async () => null),
       ensureProjectFolder: vi.fn(async () => ({ folderId: "folder-x" })),
       uploadDocument: vi.fn(async () => ({ fileId: "file-1", webViewLink: "https://drive.google.com/file-1" })),
     } as unknown as ApiDeps["app"];
     api = build();
+    await repo.syncSolidtimeCatalog({ clients: [clientA], projects: [projectX] });
   });
 
   afterEach(async () => {
@@ -88,9 +88,7 @@ describe("createApi: HTTP API", () => {
   });
 
   describe("取引先・案件・契約", () => {
-    it("PUT で保存して GET で読む", async () => {
-      expect((await api.request("/api/clients/client-a", { ...json(clientA), method: "PUT" })).status).toBe(200);
-      expect((await api.request("/api/projects/X", { ...json(projectX), method: "PUT" })).status).toBe(200);
+    it("カタログを取り込み、契約を PUT で保存して GET で読む", async () => {
       expect((await api.request("/api/contracts/c1", { ...json(contract1), method: "PUT" })).status).toBe(200);
       await expect((await api.request("/api/clients")).json()).resolves.toEqual([clientA]);
       await expect((await api.request("/api/projects?clientId=client-a")).json()).resolves.toEqual([projectX]);
@@ -98,23 +96,21 @@ describe("createApi: HTTP API", () => {
     });
 
     it("URL の id と本文の id が違えば 400", async () => {
-      const res = await api.request("/api/clients/other", { ...json(clientA), method: "PUT" });
+      const res = await api.request("/api/contracts/other", { ...json(contract1), method: "PUT" });
       expect(res.status).toBe(400);
     });
 
     it("形が正しくない本文は 400(項目の不足、型の違い)", async () => {
-      const missing = await api.request("/api/clients/client-a", { ...json({ id: "client-a" }), method: "PUT" });
+      const missing = await api.request("/api/clients/client-a/billing", { ...json({ id: "client-a" }), method: "PUT" });
       expect(missing.status).toBe(400);
       const wrongType = await api.request("/api/contracts/c1", {
-        ...json({ ...contract1, hourlyRate: "5000" }),
+        ...json({ ...contract1, projectIds: "X" }),
         method: "PUT",
       });
       expect(wrongType.status).toBe(400);
     });
 
     it("ドメインの検証で弾かれたら 400 とメッセージ", async () => {
-      await api.request("/api/clients/client-a", { ...json(clientA), method: "PUT" });
-      await api.request("/api/projects/X", { ...json(projectX), method: "PUT" });
       await api.request("/api/contracts/c1", { ...json(contract1), method: "PUT" });
       const res = await api.request("/api/contracts/c2", { ...json({ ...contract1, id: "c2" }), method: "PUT" });
       expect(res.status).toBe(400);
@@ -126,44 +122,35 @@ describe("createApi: HTTP API", () => {
     });
 
     it("月の目安時間の上書きを保存して、月で読む", async () => {
-      await api.request("/api/clients/client-a", { ...json(clientA), method: "PUT" });
-      await api.request("/api/projects/X", { ...json(projectX), method: "PUT" });
       await api.request("/api/contracts/c1", { ...json(contract1), method: "PUT" });
       const override = { contractId: "c1", projectId: null, month: "2026-12", range: { maxHours: 200 }, note: "年末" };
       expect((await api.request("/api/hours-range-overrides", json(override))).status).toBe(200);
       await expect((await api.request("/api/hours-range-overrides?month=2026-12")).json()).resolves.toEqual([override]);
     });
 
-    it("契約を保存したら、単価を solidtime に反映し、その結果も返す", async () => {
-      await api.request("/api/clients/client-a", { ...json(clientA), method: "PUT" });
-      await api.request("/api/projects/X", { ...json(projectX), method: "PUT" });
-      vi.mocked(useCases.pushRates).mockResolvedValueOnce({ pushed: [{ projectId: "X", hourlyRate: 5_000 }], skipped: [] });
-      const res = await api.request("/api/contracts/c1", { ...json(contract1), method: "PUT" });
+    it("請求設定では名前・アーカイブ・Drive の値を送っても変更しない", async () => {
+      const res = await api.request("/api/clients/client-a/billing", { ...json({
+        ...clientA, name: "変更不可", archived: true, driveFolderId: "変更不可",
+        paymentTerms: { closingDay: 31, paymentMonthOffset: 1, paymentDay: 30 },
+      }), method: "PUT" });
       expect(res.status).toBe(200);
-      expect(useCases.pushRates).toHaveBeenCalledWith("c1");
-      await expect(res.json()).resolves.toEqual({
-        ok: true,
-        pushRates: { ok: true, pushed: [{ projectId: "X", hourlyRate: 5_000 }], skipped: [] },
+      await expect(repo.getClient("client-a")).resolves.toEqual({
+        ...clientA, paymentTerms: { closingDay: 31, paymentMonthOffset: 1, paymentDay: 30 },
       });
     });
 
-    it("単価の反映に失敗しても、契約の保存は成功として返す(反映の失敗は本文で知らせる)", async () => {
-      await api.request("/api/clients/client-a", { ...json(clientA), method: "PUT" });
-      await api.request("/api/projects/X", { ...json(projectX), method: "PUT" });
-      vi.mocked(useCases.pushRates).mockRejectedValueOnce(new Error("Solidtime request failed (HTTP 500)"));
-      const res = await api.request("/api/contracts/c1", { ...json(contract1), method: "PUT" });
-      expect(res.status).toBe(200);
-      await expect(res.json()).resolves.toEqual({
-        ok: true,
-        pushRates: { ok: false, error: "Solidtime request failed (HTTP 500)" },
-      });
-      await expect((await api.request("/api/contracts")).json()).resolves.toHaveLength(1);
+    it("存在しない取引先を参照する契約は 400 で、カタログを勝手に作らない", async () => {
+      const res = await api.request("/api/contracts/c1", { ...json({ ...contract1, clientId: "missing" }), method: "PUT" });
+      expect(res.status).toBe(400);
+      await expect(repo.getClient("missing")).resolves.toBeNull();
+      await expect(repo.listContracts()).resolves.toEqual([]);
     });
 
-    it("契約の単価を solidtime に反映する", async () => {
-      const res = await api.request("/api/contracts/c1/push-rates", { method: "POST" });
+    it("契約の保存は ok だけを返す", async () => {
+      const res = await api.request("/api/contracts/c1", { ...json(contract1), method: "PUT" });
       expect(res.status).toBe(200);
-      expect(useCases.pushRates).toHaveBeenCalledWith("c1");
+      await expect(res.json()).resolves.toEqual({ ok: true });
+      await expect((await api.request("/api/contracts")).json()).resolves.toEqual([contract1]);
     });
   });
 

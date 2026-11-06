@@ -7,9 +7,7 @@ export interface Contract {
   readonly name: string;
   readonly start: string;
   readonly end: string | null;
-  readonly hourlyRate: number;
   readonly projectIds: readonly string[];
-  readonly projectRates: Readonly<Record<string, number>>;
   readonly hoursRange?: HoursRange;
   readonly projectHoursRanges?: Readonly<Record<string, HoursRange>>;
   readonly renewalOutlook: "likely" | "undecided" | "ending";
@@ -48,23 +46,7 @@ export function contractCoverage(
   return null;
 }
 
-/** 対象案件の上書きを優先し、なければ契約の初期単価を返す。 */
-export function rateFor(contract: Contract, projectId: string): number {
-  if (!contract.projectIds.includes(projectId)) {
-    throw new RangeError("projectId must belong to the contract");
-  }
-  return Object.hasOwn(contract.projectRates, projectId)
-    ? contract.projectRates[projectId] ?? contract.hourlyRate
-    : contract.hourlyRate;
-}
-
-function assertRate(rate: number): void {
-  if (!Number.isSafeInteger(rate) || rate < 0) {
-    throw new RangeError("hourly rate must be a non-negative safe integer");
-  }
-}
-
-/** 契約の期間・単価・対象案件・目安時間を検証し、同じ案件の契約期間の重複を拒否する。 */
+/** 契約の期間・対象案件・目安時間を検証し、同じ案件の契約期間の重複を拒否する。 */
 export function validateContracts(contracts: readonly Contract[]): void {
   const ids = new Set<string>();
   const byProject = new Map<string, Contract[]>();
@@ -83,13 +65,6 @@ export function validateContracts(contracts: readonly Contract[]): void {
     }
     if (new Set(contract.projectIds).size !== contract.projectIds.length) {
       throw new RangeError("contract.projectIds must be unique");
-    }
-    assertRate(contract.hourlyRate);
-    for (const [projectId, rate] of Object.entries(contract.projectRates)) {
-      if (!contract.projectIds.includes(projectId)) {
-        throw new RangeError("projectRates must only contain contract projects");
-      }
-      assertRate(rate);
     }
     if (contract.hoursRange !== undefined) {
       assertHoursRange(contract.hoursRange);

@@ -1,21 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { contractCoverage, rateFor, validateContracts, type Contract } from "./contracts.ts";
+import { contractCoverage, validateContracts, type Contract } from "./contracts.ts";
 
 const contract = (over: Partial<Contract> & Pick<Contract, "id">): Contract => ({
   clientId: "client-a",
   name: "業務委託契約",
   start: "2026-10-01",
   end: "2026-10-31",
-  hourlyRate: 5_000,
   projectIds: ["X", "Y"],
-  projectRates: {},
+
   renewalOutlook: "undecided",
   ...over,
 });
 
 describe("contractCoverage: 案件のある日を含む契約を引く", () => {
   const c1 = contract({ id: "c1" });
-  const c2 = contract({ id: "c2", start: "2026-11-01", end: "2026-11-30", hourlyRate: 6_000 });
+  const c2 = contract({ id: "c2", start: "2026-11-01", end: "2026-11-30" });
 
   it("期間内なら、その契約(更新前提ではない)", () => {
     expect(contractCoverage([c1, c2], "X", "2026-10-15")).toEqual({ contract: c1, assumesRenewal: false });
@@ -61,20 +60,6 @@ describe("contractCoverage: 案件のある日を含む契約を引く", () => {
   });
 });
 
-describe("rateFor: 契約の単価。案件ごとの上書きがあればそちら", () => {
-  it("上書きがなければ契約の単価", () => {
-    expect(rateFor(contract({ id: "c" }), "X")).toBe(5_000);
-  });
-
-  it("上書きがあればその単価", () => {
-    expect(rateFor(contract({ id: "c", projectRates: { Y: 7_000 } }), "Y")).toBe(7_000);
-  });
-
-  it("契約の対象でない案件は受け付けない", () => {
-    expect(() => rateFor(contract({ id: "c" }), "Z")).toThrow(RangeError);
-  });
-});
-
 describe("validateContracts: 契約の入力チェック", () => {
   it("正しい契約の組はそのまま通す", () => {
     expect(() =>
@@ -117,14 +102,5 @@ describe("validateContracts: 契約の入力チェック", () => {
 
   it("対象の案件がない契約は受け付けない", () => {
     expect(() => validateContracts([contract({ id: "c", projectIds: [] })])).toThrow(RangeError);
-  });
-
-  it("対象外の案件の単価の上書きは受け付けない", () => {
-    expect(() => validateContracts([contract({ id: "c", projectRates: { Z: 7_000 } })])).toThrow(RangeError);
-  });
-
-  it.each([-1, 0.5, Number.NaN])("単価 %d は受け付けない", (rate) => {
-    expect(() => validateContracts([contract({ id: "c", hourlyRate: rate })])).toThrow(RangeError);
-    expect(() => validateContracts([contract({ id: "c", projectRates: { X: rate } })])).toThrow(RangeError);
   });
 });

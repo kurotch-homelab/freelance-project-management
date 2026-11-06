@@ -54,8 +54,14 @@ describe("lineAmount: 稼働秒数と時間単価から明細金額を出す(請
     expect(lineAmount(h(1), 0)).toBe(0);
   });
 
-  it.each([-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])("単価 %d は受け付けない", (rate) => {
+  it.each([-1, 0.001, Number.NaN, Number.POSITIVE_INFINITY])("単価 %d は受け付けない", (rate) => {
     expect(() => lineAmount(h(1), rate)).toThrow(RangeError);
+  });
+
+  it("solidtime の 1/100 円単位の単価も扱い、円未満は明細で切り捨てる", () => {
+    expect(lineAmount(h(1), 0.5)).toBe(0);
+    expect(lineAmount(h(100), 0.29)).toBe(29);
+    expect(lineAmount(h(10, 1), 5000.25)).toBe(50_052);
   });
 
   it("計算の途中で安全整数を超える値は受け付けない", () => {
@@ -91,7 +97,7 @@ describe("summarizeInvoice: 明細を合計し、消費税は請求書合計で 
     });
   });
 
-  it("単価が変わった月は単価ごとの行を合計する: 20h × 5,000 + 10h × 6,000", () => {
+  it("異なる案件の単価ごとの行を合計する: 20h × 5,000 + 10h × 6,000", () => {
     const result = summarizeInvoice([
       { seconds: h(20), hourlyRate: 5_000 },
       { seconds: h(10), hourlyRate: 6_000 },

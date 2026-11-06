@@ -1,5 +1,5 @@
-import type { ClientRecord, HoursRangeOverrideRecord, ProjectRecord } from "@fpm/db";
-import type { Contract, HoursRange } from "@fpm/domain";
+import type { ClientBilling, HoursRangeOverrideRecord } from "@fpm/db";
+import { validatePaymentTerms, type Contract, type HoursRange } from "@fpm/domain";
 
 function invalid(field: string): never {
   throw new RangeError(`Invalid ${field}`);
@@ -58,12 +58,10 @@ export function parseMonth(value: unknown): string {
   return month;
 }
 
-export function parseClient(value: unknown): ClientRecord {
+export function parseClientBilling(value: unknown): ClientBilling {
   const client = object(value, "client");
   const terms = object(client.paymentTerms, "paymentTerms");
-  return {
-    id: string(client.id, "id"),
-    name: string(client.name, "name"),
+  const billing: ClientBilling = {
     paymentTerms: {
       closingDay: terms.closingDay === "end" ? "end" : integer(terms.closingDay, 1, 31, "closingDay"),
       paymentMonthOffset: integer(terms.paymentMonthOffset, 0, 12, "paymentMonthOffset"),
@@ -71,21 +69,9 @@ export function parseClient(value: unknown): ClientRecord {
     },
     subjectTemplate: string(client.subjectTemplate, "subjectTemplate"),
     lineGrouping: oneOf(client.lineGrouping, ["project", "contract"], "lineGrouping"),
-    solidtimeClientId: nullableString(client.solidtimeClientId, "solidtimeClientId"),
-    driveFolderId: nullableString(client.driveFolderId, "driveFolderId"),
   };
-}
-
-export function parseProject(value: unknown): ProjectRecord {
-  const project = object(value, "project");
-  return {
-    id: string(project.id, "id"),
-    clientId: string(project.clientId, "clientId"),
-    name: string(project.name, "name"),
-    status: oneOf(project.status, ["proposed", "won", "active", "completed", "lost"], "status"),
-    solidtimeProjectId: nullableString(project.solidtimeProjectId, "solidtimeProjectId"),
-    driveFolderId: nullableString(project.driveFolderId, "driveFolderId"),
-  };
+  validatePaymentTerms(billing.paymentTerms);
+  return billing;
 }
 
 export function parseContract(value: unknown): Contract {
@@ -97,9 +83,7 @@ export function parseContract(value: unknown): Contract {
     name: string(contract.name, "name"),
     start: string(contract.start, "start"),
     end: nullableString(contract.end, "end"),
-    hourlyRate: number(contract.hourlyRate, "hourlyRate"),
     projectIds: contract.projectIds.map((id: unknown) => string(id, "projectIds")),
-    projectRates: record(contract.projectRates, "projectRates", number),
     ...(contract.hoursRange === undefined ? {} : { hoursRange: hoursRange(contract.hoursRange, "hoursRange") }),
     ...(contract.projectHoursRanges === undefined ? {} : {
       projectHoursRanges: record(contract.projectHoursRanges, "projectHoursRanges", hoursRange),

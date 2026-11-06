@@ -57,6 +57,7 @@ function dependencies() {
     createRepository: vi.fn(createRepository),
     createSolidtimeClient: vi.fn((options: Parameters<typeof createSolidtimeClient>[0]) => ({
       ...createSolidtimeClient(options), listTimeEntries,
+      listClients: vi.fn(async () => []), listProjectsWithRates: vi.fn(async () => []),
     })),
     createAdcTokenProvider: vi.fn(() => getAccessToken),
     createCalendarClient: vi.fn(() => ({ listOutOfOffice })),
@@ -179,6 +180,8 @@ describe("buildServer", () => {
     expect(await repo.getSyncStatus("calendar")).toEqual({ lastSuccessAt: deps.clock.now().toISOString(), lastFailure: null });
     const solidtime = deps.createSolidtimeClient.mock.results[0]!.value;
     const calendar = deps.createCalendarClient.mock.results[0]!.value;
+    expect(solidtime.listClients.mock.invocationCallOrder[0]).toBeLessThan(solidtime.listProjectsWithRates.mock.invocationCallOrder[0]!);
+    expect(solidtime.listProjectsWithRates.mock.invocationCallOrder[0]).toBeLessThan(solidtime.listTimeEntries.mock.invocationCallOrder[0]!);
     expect(solidtime.listTimeEntries.mock.invocationCallOrder[0]).toBeLessThan(calendar.listOutOfOffice.mock.invocationCallOrder[0]!);
   });
 

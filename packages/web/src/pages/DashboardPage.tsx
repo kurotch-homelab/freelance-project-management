@@ -114,6 +114,13 @@ export function DashboardPage({ api }: { api: ApiClient }) {
           </div>
         </section>
 
+        {query.data.projectsWithoutClient.length > 0 && <Alert tone="warning" title="取引先が未設定の案件があります">
+          {query.data.projectsWithoutClient.map((project) => <p key={project.id}>{project.name} は取引先が未設定のため、請求書ガイドに出せません。solidtime で取引先を設定してください。</p>)}
+        </Alert>}
+        {query.data.projectsWithoutRate.length > 0 && <Alert tone="warning" title="単価が未設定の案件があります">
+          {query.data.projectsWithoutRate.map((project) => <p key={project.id}>{project.name} は単価が未設定のため、請求見込み額に含めていません。solidtime で単価を設定してください。</p>)}
+        </Alert>}
+
         {query.data.unlinked.length > 0 && (
           <Alert tone="warning" title="案件に結びついていない solidtime の稼働があります(請求に入りません)">
             {query.data.unlinked.map(({ solidtimeProjectId, seconds }) => (

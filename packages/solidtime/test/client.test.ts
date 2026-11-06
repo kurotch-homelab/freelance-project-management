@@ -7,10 +7,6 @@ import page1 from "./fixtures/time-entries-page1.json" with { type: "json" };
 import page2 from "./fixtures/time-entries-page2.json" with { type: "json" };
 import projectsList from "./fixtures/projects-list.json" with { type: "json" };
 import clientsList from "./fixtures/clients-list.json" with { type: "json" };
-import projectGet from "./fixtures/project-get.json" with { type: "json" };
-import projectUpdate from "./fixtures/project-update.json" with { type: "json" };
-import projectCreate from "./fixtures/project-create.json" with { type: "json" };
-import clientCreate from "./fixtures/client-create.json" with { type: "json" };
 import error401 from "./fixtures/error-401.json" with { type: "json" };
 
 // フィクスチャは 2026-11-05 に Sandbox 組織で記録した実際のレスポンス
@@ -203,56 +199,6 @@ describe("取引先・プロジェクト", () => {
     ]);
   });
 
-  it("createClient", async () => {
-    server.use(
-      http.post(`${API}/clients`, async ({ request }) => {
-        expect(await request.json()).toEqual({ name: "fixture client" });
-        return HttpResponse.json(clientCreate, { status: 201 });
-      }),
-    );
-    await expect(client().createClient("fixture client")).resolves.toMatchObject({ id: clientCreate.data.id });
-  });
-
-  it("createProject: 単価を 1/100 単位に直して送る", async () => {
-    server.use(
-      http.post(`${API}/projects`, async ({ request }) => {
-        expect(await request.json()).toMatchObject({
-          name: "fixture project",
-          client_id: clientCreate.data.id,
-          is_billable: true,
-          billable_rate: 500_000,
-        });
-        return HttpResponse.json(projectCreate, { status: 201 });
-      }),
-    );
-    await expect(
-      client().createProject({ name: "fixture project", clientId: clientCreate.data.id, hourlyRate: 5_000 }),
-    ).resolves.toMatchObject({ id: projectCreate.data.id, hourlyRate: 5_000 });
-  });
-
-  it("setProjectRate: 今のプロジェクトを読み、ほかの項目はそのまま単価だけ変えて PUT する", async () => {
-    let body: unknown;
-    server.use(
-      http.get(`${API}/projects/${projectGet.data.id}`, () => HttpResponse.json(projectGet)),
-      http.put(`${API}/projects/${projectGet.data.id}`, async ({ request }) => {
-        body = await request.json();
-        return HttpResponse.json(projectUpdate);
-      }),
-    );
-    await expect(client().setProjectRate(projectGet.data.id, 6_000)).resolves.toMatchObject({ hourlyRate: 6_000 });
-    // 必須の項目と単価だけを送る(is_archived などを送ると、アーカイブ日時が変わることがある)
-    expect(body).toEqual({
-      name: projectGet.data.name,
-      color: projectGet.data.color,
-      is_billable: projectGet.data.is_billable,
-      client_id: projectGet.data.client_id,
-      billable_rate: 600_000,
-    });
-  });
-
-  it.each([-1, 0.5, Number.NaN])("単価 %d は送らない", async (rate) => {
-    await expect(client().setProjectRate("p", rate)).rejects.toThrow(RangeError);
-  });
 });
 
 describe("エラー", () => {

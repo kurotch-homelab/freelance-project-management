@@ -3,13 +3,6 @@ import { arrayData, dataOf, isNonnegativeInteger, isRecord, parseClient, parsePr
 import { createTimeZone } from "./time-zone.ts";
 import type { ListTimeEntriesOptions, ProjectDailyWork, SolidtimeClient, SolidtimeClientOptions, TimeEntry } from "./types.ts";
 
-function rateInHundredths(yen: number): number {
-  if (!Number.isSafeInteger(yen) || yen < 0 || !Number.isSafeInteger(yen * 100)) {
-    throw new RangeError("hourlyRate must be non-negative whole yen representable in hundredths");
-  }
-  return yen * 100;
-}
-
 export function createSolidtimeClient(options: SolidtimeClientOptions): SolidtimeClient {
   const { organizationId, token } = options;
   const apiUrl = `${options.baseUrl.replace(/\/+$/, "")}/api/v1`;
@@ -22,22 +15,18 @@ export function createSolidtimeClient(options: SolidtimeClientOptions): Solidtim
   async function request<T>(
     path: string,
     parse: (body: unknown, status: number) => T,
-    method = "GET",
-    body?: unknown,
   ): Promise<T> {
     const signal = AbortSignal.timeout(timeoutMs);
     let response: Response;
     let text: string;
     try {
       response = await fetcher(`${apiUrl}${path}`, {
-        method,
+        method: "GET",
         signal,
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       // The fetch signal also limits reading the body after headers have arrived.
       text = await response.text();
@@ -165,33 +154,35 @@ export function createSolidtimeClient(options: SolidtimeClientOptions): Solidtim
     },
     listProjects: () => listResources("projects", parseProject),
     listClients: () => listResources("clients", parseClient),
-    createClient: (name) => request(
-      `${organizationPath}/clients`, (body, status) => parseClient(dataOf(body, status), status), "POST", { name },
-    ),
-    async createProject(input) {
-      const rate = input.hourlyRate == null ? null : rateInHundredths(input.hourlyRate);
-      return request(`${organizationPath}/projects`, (body, status) => parseProject(dataOf(body, status), status), "POST", {
-        name: input.name,
-        // The API requires a color even when the caller does not choose one.
-        color: input.color ?? "#ef5350",
-        client_id: input.clientId ?? null,
-        is_billable: input.isBillable ?? true,
-        billable_rate: rate,
-        is_public: input.isPublic ?? false,
-        estimated_time: input.estimatedTime ?? null,
-      });
-    },
-    async setProjectRate(projectId, hourlyRate) {
-      const rate = rateInHundredths(hourlyRate);
-      const path = `${organizationPath}/projects/${encodeURIComponent(projectId)}`;
-      const current = await request(path, (body, status) => parseProject(dataOf(body, status), status));
-      return request(path, (body, status) => parseProject(dataOf(body, status), status), "PUT", {
-        name: current.name,
-        color: current.color,
-        client_id: current.clientId,
-        is_billable: current.isBillable,
-        billable_rate: rate,
-      });
+    async listProjectsWithRates() {
+      const member = await resolveMemberId();
+      const [projects, members, organizationRate] = await Promise.all([
+        listResources("projects", parseProject),
+        listResources("members", (value, status) => {
+          assertResponse(isRecord(value) && typeof value.id === "string", status, "member fields");
+          return { id: value.id, rate: parseRate(value, status) };
+        }),
+        request(organizationPath, (body, status) => parseRate(dataOf(body, status), status)),
+      ]);
+      const myMember = members.find((item) => item.id === member);
+      if (!myMember) throw new SolidtimeApiError(200, "Configured member not found in organization");
+      // Fetch every page, even if another member appears before the token owner.
+      const result = [];
+      for (const project of projects) {
+        const projectMembers = await listResources(`projects/${encodeURIComponent(project.id)}/project-members`, (value, status) => {
+          assertResponse(isRecord(value) && typeof value.member_id === "string", status, "project member fields");
+          return { memberId: value.member_id, rate: parseRate(value, status) };
+        });
+        const rate = projectMembers.find((item) => item.memberId === member)?.rate
+          ?? project.hourlyRate ?? myMember.rate ?? organizationRate;
+        result.push({ ...project, hourlyRate: rate });
+      }
+      return result;
     },
   };
+}
+
+function parseRate(value: unknown, status: number): number | null {
+  assertResponse(isRecord(value) && (value.billable_rate === null || isNonnegativeInteger(value.billable_rate)), status, "billable_rate");
+  return value.billable_rate === null ? null : value.billable_rate / 100;
 }

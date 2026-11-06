@@ -38,44 +38,48 @@ describe("createApiClient: 画面から API を呼ぶ", () => {
   });
 
   it.each([
-    ["listProjects", [], "/api/projects"],
-    ["listProjects", ["client-a"], "/api/projects?clientId=client-a"],
-    ["listContracts", [], "/api/contracts"],
-  ] as const)("%s: GET %s", async (method, args, url) => {
+    [{}, "/api/projects"],
+    [{ clientId: "client-a" }, "/api/projects?clientId=client-a"],
+    [{ includeArchived: true }, "/api/projects?includeArchived=true"],
+  ] as const)("listProjects(%o): GET %s", async (options, url) => {
     const fetch = vi.fn(async () => response(200, []));
-    await (createApiClient({ fetch })[method] as (...a: readonly string[]) => Promise<unknown>)(...args);
+    await createApiClient({ fetch }).listProjects(options);
     expect(fetch).toHaveBeenCalledWith(url, expect.objectContaining({ credentials: "same-origin" }));
   });
 
-  it("saveClient: PUT /api/clients/:id に JSON で送る(id はエンコードする)", async () => {
+  it("listContracts: GET /api/contracts", async () => {
+    const fetch = vi.fn(async () => response(200, []));
+    await createApiClient({ fetch }).listContracts();
+    expect(fetch).toHaveBeenCalledWith("/api/contracts", expect.objectContaining({ credentials: "same-origin" }));
+  });
+
+  it("saveClientBilling: PUT /api/clients/:id/billing に JSON で送る(id はエンコードする)", async () => {
     const fetch = vi.fn(async () => response(200, { ok: true }));
-    const client = { id: "a/b", name: "A 社" };
-    await createApiClient({ fetch }).saveClient(client as never);
+    const billing = { paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" }, subjectTemplate: "x", lineGrouping: "project" };
+    await createApiClient({ fetch }).saveClientBilling("a/b", billing as never);
     expect(fetch).toHaveBeenCalledWith(
-      "/api/clients/a%2Fb",
+      "/api/clients/a%2Fb/billing",
       expect.objectContaining({
         method: "PUT",
         credentials: "same-origin",
         headers: expect.objectContaining({ "content-type": "application/json" }),
-        body: JSON.stringify(client),
+        body: JSON.stringify(billing),
       }),
     );
   });
 
-  it("saveContract: 本文の pushRates を返す", async () => {
-    const body = { ok: true, pushRates: { ok: false, error: "Solidtime request failed (HTTP 500)" } };
-    const fetch = vi.fn(async () => response(200, body));
-    await expect(createApiClient({ fetch }).saveContract({ id: "c1" } as never)).resolves.toEqual(body);
+  it("saveContract: PUT /api/contracts/:id", async () => {
+    const fetch = vi.fn(async () => response(200, { ok: true }));
+    await createApiClient({ fetch }).saveContract({ id: "c1" } as never);
     expect(fetch).toHaveBeenCalledWith("/api/contracts/c1", expect.objectContaining({ method: "PUT" }));
   });
 
   it("保存の 400 はサーバーのメッセージつきのエラー、401 は UnauthorizedError", async () => {
     const bad = vi.fn(async () => response(400, { error: "contracts overlap" }));
-    await expect(createApiClient({ fetch: bad }).saveProject({ id: "X" } as never)).rejects.toThrow("contracts overlap");
+    await expect(createApiClient({ fetch: bad }).saveContract({ id: "c1" } as never)).rejects.toThrow("contracts overlap");
     const unauthorized = vi.fn(async () => response(401, { error: "unauthorized" }));
-    await expect(createApiClient({ fetch: unauthorized }).saveProject({ id: "X" } as never)).rejects.toBeInstanceOf(
+    await expect(createApiClient({ fetch: unauthorized }).saveContract({ id: "c1" } as never)).rejects.toBeInstanceOf(
       UnauthorizedError,
     );
   });
 });
-

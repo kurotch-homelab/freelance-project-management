@@ -1,13 +1,14 @@
 import { summarizeInvoice } from "./billing.ts";
-import { contractCoverage, rateFor, validateContracts, type Contract } from "./contracts.ts";
+import { contractCoverage, validateContracts, type Contract } from "./contracts.ts";
 import { formatDate, parseDate } from "./date.ts";
 import type { DailyWork } from "./forecast/weekday-average.ts";
 import { invoiceDates, type InvoiceDates, type PaymentTerms } from "./payment-terms.ts";
 
 export interface InvoiceGuideProject {
   readonly id: string;
-  readonly clientId: string;
+  readonly clientId: string | null;
   readonly name: string;
+  readonly hourlyRate: number | null;
   readonly work: readonly DailyWork[];
 }
 
@@ -36,6 +37,7 @@ export interface InvoiceGuide extends InvoiceDates {
   readonly clientName: string;
   readonly subject: string;
   readonly lines: readonly InvoiceGuideLine[];
+  readonly warnings: readonly { readonly kind: "missingRate"; readonly projectId: string; readonly projectName: string; readonly seconds: number }[];
   readonly note: string | null;
   readonly subtotal: number;
   readonly tax: number;
@@ -44,7 +46,7 @@ export interface InvoiceGuide extends InvoiceDates {
 
 interface LineGroup {
   readonly name: string;
-  readonly contractId: string | null;
+  readonly contractId: string;
   readonly hourlyRate: number;
   readonly firstProjectIndex: number;
   readonly projects: Map<string, { readonly name: string; seconds: number }>;
@@ -116,15 +118,7 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
   const monthlyContracts = contracts.filter((contract) =>
     contract.start <= monthEnd && (contract.end === null || contract.end >= monthStart),
   );
-  // 実績のない契約期間も含め、案件ごとの月内の単価変更を調べる。
-  const monthlyRates = new Map<string, Set<number>>();
-  for (const contract of monthlyContracts) {
-    for (const projectId of contract.projectIds) {
-      const rates = monthlyRates.get(projectId) ?? new Set<number>();
-      rates.add(rateFor(contract, projectId));
-      monthlyRates.set(projectId, rates);
-    }
-  }
+  const warnings: { kind: "missingRate"; projectId: string; projectName: string; seconds: number }[] = [];
 
   for (const [projectIndex, project] of projects.entries()) {
     if (project.clientId !== client.id) {
@@ -143,18 +137,21 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
       if (work.seconds === 0 || work.date < monthStart || work.date > monthEnd) {
         continue;
       }
+      projectSeconds += work.seconds;
+      if (!Number.isSafeInteger(projectSeconds)) throw new RangeError("total seconds must be a safe integer");
+      if (project.hourlyRate === null) continue;
       const coverage = contractCoverage(contracts, project.id, work.date);
       if (coverage === null || coverage.assumesRenewal) {
         throw new RangeError("work.date must be covered by an actual contract");
       }
       const { contract } = coverage;
-      const hourlyRate = rateFor(contract, project.id);
-      const key = client.lineGrouping === "project" ? project.id : contract.id;
+      const hourlyRate = project.hourlyRate;
+      const key = client.lineGrouping === "project" ? JSON.stringify([project.id, contract.id]) : contract.id;
       const rates = groups.get(key) ?? new Map<number, LineGroup>();
       groups.set(key, rates);
       const group = rates.get(hourlyRate) ?? {
         name: client.lineGrouping === "project" ? project.name : contract.name,
-        contractId: client.lineGrouping === "contract" ? contract.id : null,
+        contractId: contract.id,
         hourlyRate,
         firstProjectIndex: projectIndex,
         projects: new Map<string, { readonly name: string; seconds: number }>(),
@@ -165,23 +162,25 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
       projectWork.seconds += work.seconds;
       group.projects.set(project.id, projectWork);
       group.seconds += work.seconds;
-      projectSeconds += work.seconds;
-      if (!Number.isSafeInteger(group.seconds) || !Number.isSafeInteger(projectSeconds)) {
+      if (!Number.isSafeInteger(group.seconds)) {
         throw new RangeError("total seconds must be a safe integer");
       }
     }
+    if (project.hourlyRate === null && projectSeconds > 0) {
+      warnings.push({ kind: "missingRate", projectId: project.id, projectName: project.name, seconds: projectSeconds });
+    }
   }
 
-  if (groups.size === 0) {
+  if (groups.size === 0 && warnings.length === 0) {
     return null;
   }
   const lines = Array.from(groups.values()).flatMap((rates) =>
     Array.from(rates.values(), (group) => {
-      // 実績の日付ではなく、同じ単価で契約されている期間を表示する。
+      // 実績の日付ではなく、対象の契約期間を表示する。
       const matchingContracts = monthlyContracts.filter((contract) =>
-        (group.contractId === null || contract.id === group.contractId) &&
+        contract.id === group.contractId &&
         Array.from(group.projects.keys()).some((projectId) =>
-          contract.projectIds.includes(projectId) && rateFor(contract, projectId) === group.hourlyRate,
+          contract.projectIds.includes(projectId),
         ),
       );
       return { ...group, periods: contractPeriods(matchingContracts, monthStart, monthEnd) };
@@ -195,7 +194,7 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
       periodsOverlap(line.periods, other.periods),
     );
     const showPeriods = Array.from(line.projects.keys()).some((projectId) =>
-      (monthlyRates.get(projectId)?.size ?? 0) > 1,
+      monthlyContracts.filter((contract) => contract.projectIds.includes(projectId)).length > 1,
     ) || sameNameLines.some((other) => !periodsOverlap(line.periods, other.periods));
     const labels: string[] = [];
     if (showProjects) {
@@ -219,6 +218,7 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
   const summary = summarizeInvoice(entries);
   return {
     clientName: client.name,
+    warnings,
     subject: client.subjectTemplate
       .replaceAll("{YYYY}", year)
       .replaceAll("{MM}", paddedMonth)

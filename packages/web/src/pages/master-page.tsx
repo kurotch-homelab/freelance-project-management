@@ -26,12 +26,16 @@ export function useMasterEditor<T>(reload: () => Promise<void>) {
   }, []);
   useEffect(() => {
     if (editing === null && !saving && opener.current) {
-      opener.current.focus();
+      if (document.activeElement === document.body) opener.current.focus();
       opener.current = null;
     }
   }, [editing, saving]);
 
   function close() {
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused !== document.body && !focused.closest(".master-form")) {
+      opener.current = null;
+    }
     setEditing(null);
   }
 
@@ -51,9 +55,10 @@ export function useMasterEditor<T>(reload: () => Promise<void>) {
       try {
         const result = await operation();
         if (!active.current) return;
+        await reload();
+        if (!active.current) return;
         setNotice(result ?? { error: false, text: "保存しました" });
         close();
-        await reload();
       } catch (error) {
         if (active.current && !redirectIfUnauthorized(error)) {
           setNotice({ error: true, text: `保存できませんでした: ${errorMessage(error)}` });

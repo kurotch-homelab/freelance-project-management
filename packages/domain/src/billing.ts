@@ -28,10 +28,16 @@ function billableHundredths(seconds: number): number {
 }
 
 function amountFromHundredths(hundredths: number, hourlyRate: number): number {
-  assertNonNegativeSafeInteger(hourlyRate, "hourlyRate");
-  const product = hundredths * hourlyRate;
-  assertNonNegativeSafeInteger(product, "hundredths * hourlyRate");
-  return Math.floor(product / 100);
+  // solidtime rates are hundredths of currency, including for JPY.
+  const scaledRate = hourlyRate * 100;
+  const rateCents = Math.round(scaledRate);
+  assertNonNegativeSafeInteger(rateCents, "hourlyRate in hundredths");
+  if (hourlyRate < 0 || Math.abs(scaledRate - rateCents) > Number.EPSILON * Math.max(1, Math.abs(scaledRate))) {
+    throw new RangeError("hourlyRate must have at most two decimal places");
+  }
+  const product = hundredths * rateCents;
+  assertNonNegativeSafeInteger(product, "hundredths * rateCents");
+  return Math.floor(product / 10_000);
 }
 
 /** 稼働秒数を小数第二位までの請求時間に切り捨てる。 */

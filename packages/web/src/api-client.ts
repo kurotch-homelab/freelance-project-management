@@ -1,5 +1,5 @@
 import type { createApp } from "@fpm/app";
-import type { ClientRecord, ProjectRecord } from "@fpm/db";
+import type { ClientBilling, ClientRecord, ProjectRecord } from "@fpm/db";
 import type { Contract, InvoiceGuide } from "@fpm/domain";
 
 export type Dashboard = Awaited<ReturnType<ReturnType<typeof createApp>["dashboard"]>>;
@@ -7,11 +7,6 @@ export type SyncSource = keyof Dashboard["sync"];
 export type Client = ClientRecord;
 export type Project = ProjectRecord;
 export type { Contract } from "@fpm/domain";
-type RatePushResult = Awaited<ReturnType<ReturnType<typeof createApp>["pushRates"]>>;
-export type SaveContractResult = {
-  readonly ok: true;
-  readonly pushRates: ({ readonly ok: true } & RatePushResult) | { readonly ok: false; readonly error: string };
-};
 export type SyncResult =
   | { readonly kind: "ok" }
   | { readonly kind: "busy" }
@@ -20,11 +15,10 @@ export type SyncResult =
 export interface ApiClient {
   dashboard(): Promise<Dashboard>;
   listClients(): Promise<readonly Client[]>;
-  listProjects(clientId?: string): Promise<readonly Project[]>;
+  listProjects(options?: { clientId?: string; includeArchived?: boolean }): Promise<readonly Project[]>;
   listContracts(clientId?: string): Promise<readonly Contract[]>;
-  saveClient(client: Client): Promise<void>;
-  saveProject(project: Project): Promise<void>;
-  saveContract(contract: Contract): Promise<SaveContractResult>;
+  saveClientBilling(id: string, billing: ClientBilling): Promise<void>;
+  saveContract(contract: Contract): Promise<void>;
   invoiceGuide(query: { clientId: string; month: string }): Promise<InvoiceGuide | null>;
   sync(source: SyncSource): Promise<SyncResult>;
 }
@@ -72,11 +66,19 @@ export function createApiClient({ fetch: fetcher = globalThis.fetch }: { fetch?:
   return {
     dashboard: () => request<Dashboard>("/api/dashboard"),
     listClients: () => request<readonly Client[]>("/api/clients"),
-    listProjects: (clientId) => list<Project>("projects", clientId),
+    listProjects: (options = {}) => {
+      const params = new URLSearchParams();
+      if (options.clientId !== undefined) params.set("clientId", options.clientId);
+      if (options.includeArchived !== undefined) params.set("includeArchived", String(options.includeArchived));
+      return request(`/api/projects${params.size ? `?${params}` : ""}`);
+    },
     listContracts: (clientId) => list<Contract>("contracts", clientId),
-    async saveClient(client) { await save<{ ok: true }>("clients", client); },
-    async saveProject(project) { await save<{ ok: true }>("projects", project); },
-    saveContract: (contract) => save<SaveContractResult>("contracts", contract),
+    async saveClientBilling(id, billing) {
+      await request(`/api/clients/${encodeURIComponent(id)}/billing`, {
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(billing),
+      });
+    },
+    async saveContract(contract) { await save<{ ok: true }>("contracts", contract); },
     async invoiceGuide(query) {
       const params = new URLSearchParams(query);
       const body = await request<{ guide: InvoiceGuide | null }>(`/api/invoice-guide?${params}`);

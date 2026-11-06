@@ -9,15 +9,16 @@ import { ContractsPage } from "./pages/ContractsPage.tsx";
 import { ProjectsPage } from "./pages/ProjectsPage.tsx";
 import { TestProviders } from "./test-providers.tsx";
 
+// 取引先・案件は solidtime から取り込む。画面で変えるのは取引先の請求の設定と、契約だけ
 afterEach(() => cleanup());
 
 const clientA = {
   id: "client-a",
   name: "A 社",
+  archived: false,
   paymentTerms: { closingDay: "end" as const, paymentMonthOffset: 1, paymentDay: "end" as const },
   subjectTemplate: "{YYYY}年{M}月分 業務委託料",
   lineGrouping: "project" as const,
-  solidtimeClientId: "st-a",
   driveFolderId: "folder-a",
 };
 const clientB = {
@@ -26,24 +27,18 @@ const clientB = {
   name: "B 社",
   paymentTerms: { closingDay: 20, paymentMonthOffset: 2, paymentDay: 10 },
   lineGrouping: "contract" as const,
-  solidtimeClientId: null,
   driveFolderId: null,
 };
-const projectX = {
-  id: "X", clientId: "client-a", name: "案件 X", status: "active" as const, solidtimeProjectId: "st-x", driveFolderId: "folder-x",
-};
-const projectY = {
-  id: "Y", clientId: "client-a", name: "案件 Y", status: "proposed" as const, solidtimeProjectId: null, driveFolderId: null,
-};
+const projectX = { id: "X", clientId: "client-a", name: "案件 X", archived: false, hourlyRate: 5_000, driveFolderId: "folder-x" };
+const projectY = { id: "Y", clientId: "client-a", name: "案件 Y", archived: false, hourlyRate: null, driveFolderId: null };
+const projectOld = { id: "OLD", clientId: "client-a", name: "案件 OLD", archived: true, hourlyRate: 4_000, driveFolderId: null };
 const contract1 = {
   id: "c1",
   clientId: "client-a",
   name: "業務委託契約",
   start: "2026-01-01",
   end: null,
-  hourlyRate: 5_000,
-  projectIds: ["X"],
-  projectRates: {},
+  projectIds: ["X", "OLD"],
   hoursRange: { minHours: 140, maxHours: 180 },
   projectHoursRanges: { X: { maxHours: 80 } },
   renewalOutlook: "undecided" as const,
@@ -52,143 +47,137 @@ const contract1 = {
 const fakeApi = (over: Partial<ApiClient> = {}): ApiClient =>
   ({
     listClients: vi.fn(async () => [clientA, clientB]),
-    listProjects: vi.fn(async () => [projectX, projectY]),
+    listProjects: vi.fn(async (options?: { includeArchived?: boolean }) =>
+      options?.includeArchived ? [projectX, projectY, projectOld] : [projectX, projectY],
+    ),
     listContracts: vi.fn(async () => [contract1]),
-    saveClient: vi.fn(async () => undefined),
-    saveProject: vi.fn(async () => undefined),
-    saveContract: vi.fn(async () => ({ ok: true, pushRates: { ok: true, pushed: [], skipped: [] } })),
+    saveClientBilling: vi.fn(async () => undefined),
+    saveContract: vi.fn(async () => undefined),
     ...over,
   }) as unknown as ApiClient;
 
 const newId = () => "new-1";
 const renderPage = (ui: React.ReactElement) => render(<TestProviders>{ui}</TestProviders>);
 
-describe("ClientsPage: 取引先", () => {
-  it("一覧に名前と支払条件を出す", async () => {
-    renderPage(<ClientsPage api={fakeApi()} newId={newId} />);
+describe("ClientsPage: 取引先(solidtime から取り込む。請求の設定だけ変える)", () => {
+  it("一覧に名前と支払条件を出す。追加のボタンはなく、solidtime で追加することを案内する", async () => {
+    renderPage(<ClientsPage api={fakeApi()} />);
     const table = await screen.findByRole("table", { name: "取引先" });
     expect(within(table).getByRole("row", { name: /A 社/ })).toHaveTextContent("月末締め 翌月末払い");
     expect(within(table).getByRole("row", { name: /B 社/ })).toHaveTextContent("20日締め 翌々月10日払い");
+    expect(screen.queryByRole("button", { name: /取引先を追加/ })).not.toBeInTheDocument();
+    expect(screen.getByText("取引先の追加や名前の変更は solidtime で行います")).toBeInTheDocument();
   });
 
-  it("追加: 入力した内容を保存し、一覧を読み直す", async () => {
+  it("請求の設定を変えて保存する。名前は変えられない", async () => {
     const user = userEvent.setup();
     const api = fakeApi();
-    renderPage(<ClientsPage api={api} newId={newId} />);
-    await user.click(await screen.findByRole("button", { name: "取引先を追加" }));
-    await user.type(screen.getByLabelText("名前"), "C 社");
+    renderPage(<ClientsPage api={api} />);
+    await user.click(await screen.findByRole("button", { name: "A 社 の請求の設定を変える" }));
+    expect(screen.queryByLabelText("名前")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("締め日"), "20");
+    await user.selectOptions(screen.getByLabelText("明細のまとめ方"), "contract");
     await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(api.saveClient).toHaveBeenCalledWith({
-      id: "new-1",
-      name: "C 社",
-      paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" },
+    expect(api.saveClientBilling).toHaveBeenCalledWith("client-a", {
+      paymentTerms: { closingDay: 20, paymentMonthOffset: 1, paymentDay: "end" },
       subjectTemplate: "{YYYY}年{M}月分 業務委託料",
-      lineGrouping: "project",
-      solidtimeClientId: null,
-      driveFolderId: null,
+      lineGrouping: "contract",
     });
     expect(await screen.findByRole("status")).toHaveTextContent("保存しました");
     expect(api.listClients).toHaveBeenCalledTimes(2);
   });
 
-  it("編集: 画面にない項目(solidtime や Drive の id)はそのまま残す", async () => {
+  it("29〜31 日の締め日・支払日もそのまま開いて保存できる(存在しない日は月末として扱う)", async () => {
     const user = userEvent.setup();
-    const api = fakeApi();
-    renderPage(<ClientsPage api={api} newId={newId} />);
-    await user.click(await screen.findByRole("button", { name: "A 社 を編集" }));
-    expect(screen.getByLabelText("名前")).toHaveValue("A 社");
-    await user.selectOptions(screen.getByLabelText("締め日"), "20");
-    await user.selectOptions(screen.getByLabelText("明細のまとめ方"), "contract");
+    const clientC = { ...clientA, id: "client-c", name: "C 社", paymentTerms: { closingDay: 31, paymentMonthOffset: 1, paymentDay: 30 } };
+    const api = fakeApi({ listClients: vi.fn(async () => [clientC]) });
+    renderPage(<ClientsPage api={api} />);
+    await user.click(await screen.findByRole("button", { name: "C 社 の請求の設定を変える" }));
+    expect(screen.getByLabelText("締め日")).toHaveValue("31");
+    expect(screen.getByLabelText("支払日")).toHaveValue("30");
     await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(api.saveClient).toHaveBeenCalledWith({
-      ...clientA,
-      paymentTerms: { ...clientA.paymentTerms, closingDay: 20 },
-      lineGrouping: "contract",
+    expect(api.saveClientBilling).toHaveBeenCalledWith("client-c", {
+      paymentTerms: clientC.paymentTerms,
+      subjectTemplate: clientC.subjectTemplate,
+      lineGrouping: clientC.lineGrouping,
     });
   });
 
-  it("名前が空なら保存せず、欄のそばにエラーを出す", async () => {
+  it("件名のひな形が空なら保存せず、欄のそばにエラーを出す", async () => {
     const user = userEvent.setup();
     const api = fakeApi();
-    renderPage(<ClientsPage api={api} newId={newId} />);
-    await user.click(await screen.findByRole("button", { name: "取引先を追加" }));
+    renderPage(<ClientsPage api={api} />);
+    await user.click(await screen.findByRole("button", { name: "A 社 の請求の設定を変える" }));
+    await user.clear(screen.getByLabelText("件名のひな形"));
     await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(api.saveClient).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("名前")).toHaveAccessibleDescription(/名前を入力してください/);
+    expect(api.saveClientBilling).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("件名のひな形")).toHaveAccessibleDescription(/件名のひな形を入力してください/);
   });
 
   it("サーバーが断ったら、その理由を出して入力を残す", async () => {
     const user = userEvent.setup();
-    const api = fakeApi({ saveClient: vi.fn().mockRejectedValue(new Error("invalid payment terms")) });
-    renderPage(<ClientsPage api={api} newId={newId} />);
-    await user.click(await screen.findByRole("button", { name: "取引先を追加" }));
-    await user.type(screen.getByLabelText("名前"), "C 社");
+    const api = fakeApi({ saveClientBilling: vi.fn().mockRejectedValue(new Error("invalid payment terms")) });
+    renderPage(<ClientsPage api={api} />);
+    await user.click(await screen.findByRole("button", { name: "A 社 の請求の設定を変える" }));
+    await user.selectOptions(screen.getByLabelText("締め日"), "20");
     await user.click(screen.getByRole("button", { name: "保存" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("invalid payment terms");
-    expect(screen.getByLabelText("名前")).toHaveValue("C 社");
+    expect(screen.getByLabelText("締め日")).toHaveValue("20");
   });
 });
 
-describe("ProjectsPage: 案件", () => {
-  it("一覧に取引先の名前、ステータス、solidtime のプロジェクトを出す", async () => {
-    renderPage(<ProjectsPage api={fakeApi()} newId={newId} />);
+describe("ProjectsPage: 案件(solidtime から取り込む。見るだけ)", () => {
+  it("一覧に取引先と単価を出す。単価がなければ「未設定」", async () => {
+    renderPage(<ProjectsPage api={fakeApi()} />);
     const table = await screen.findByRole("table", { name: "案件" });
     const x = within(table).getByRole("row", { name: /案件 X/ });
     expect(x).toHaveTextContent("A 社");
-    expect(x).toHaveTextContent("稼働中");
-    expect(x).toHaveTextContent("st-x");
-    expect(within(table).getByRole("row", { name: /案件 Y/ })).toHaveTextContent("提案中");
+    expect(x).toHaveTextContent("¥5,000/時間");
+    expect(within(table).getByRole("row", { name: /案件 Y/ })).toHaveTextContent("未設定");
   });
 
-  it("追加: solidtime のプロジェクト ID は任意(空なら null)", async () => {
-    const user = userEvent.setup();
-    const api = fakeApi();
-    renderPage(<ProjectsPage api={api} newId={newId} />);
-    await user.click(await screen.findByRole("button", { name: "案件を追加" }));
-    await user.selectOptions(screen.getByLabelText("取引先"), "client-b");
-    await user.type(screen.getByLabelText("名前"), "案件 Z");
-    await user.selectOptions(screen.getByLabelText("ステータス"), "won");
-    await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(api.saveProject).toHaveBeenCalledWith({
-      id: "new-1", clientId: "client-b", name: "案件 Z", status: "won", solidtimeProjectId: null, driveFolderId: null,
-    });
-    expect(await screen.findByRole("status")).toHaveTextContent("保存しました");
+  it("追加・編集のボタンはなく、solidtime で変えることを案内する", async () => {
+    renderPage(<ProjectsPage api={fakeApi()} />);
+    await screen.findByRole("table", { name: "案件" });
+    expect(screen.queryByRole("button", { name: /追加|編集/ })).not.toBeInTheDocument();
+    expect(screen.getByText("案件の追加・名前・単価・アーカイブは solidtime で変えます")).toBeInTheDocument();
   });
 
-  it("編集: solidtime のプロジェクトを結びつける。Drive のフォルダーはそのまま", async () => {
+  it("アーカイブした案件はふだん隠し、切り替えると「アーカイブ」の印つきで出す", async () => {
     const user = userEvent.setup();
     const api = fakeApi();
-    renderPage(<ProjectsPage api={api} newId={newId} />);
-    await user.click(await screen.findByRole("button", { name: "案件 Y を編集" }));
-    await user.type(screen.getByLabelText("solidtime のプロジェクト ID"), "st-y");
-    await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(api.saveProject).toHaveBeenCalledWith({ ...projectY, solidtimeProjectId: "st-y" });
+    renderPage(<ProjectsPage api={api} />);
+    const table = await screen.findByRole("table", { name: "案件" });
+    expect(within(table).queryByRole("row", { name: /案件 OLD/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "アーカイブした案件も表示" }));
+    const old = await within(screen.getByRole("table", { name: "案件" })).findByRole("row", { name: /案件 OLD/ });
+    expect(old).toHaveTextContent("アーカイブ");
+    expect(api.listProjects).toHaveBeenLastCalledWith({ includeArchived: true });
   });
 });
 
-describe("ContractsPage: 契約", () => {
-  it("一覧に取引先、期間、単価、更新の見込みを出す", async () => {
+describe("ContractsPage: 契約(単価は solidtime。契約は案件・期間・目安時間・更新の見込み)", () => {
+  it("一覧に取引先、期間、更新の見込みを出す。単価は出さない", async () => {
     renderPage(<ContractsPage api={fakeApi()} newId={newId} />);
     const table = await screen.findByRole("table", { name: "契約" });
     const row = within(table).getByRole("row", { name: /業務委託契約/ });
     expect(row).toHaveTextContent("A 社");
     expect(row).toHaveTextContent("2026-01-01 〜");
-    expect(row).toHaveTextContent("¥5,000/時間");
     expect(row).toHaveTextContent("未定");
+    expect(row).not.toHaveTextContent("¥");
   });
 
-  it("追加: 取引先の案件から選び、目安時間と更新の見込みも保存する", async () => {
+  it("追加: 取引先の案件から選び、目安時間と更新の見込みも保存する。単価の欄はない", async () => {
     const user = userEvent.setup();
     const api = fakeApi();
     renderPage(<ContractsPage api={api} newId={newId} />);
     await user.click(await screen.findByRole("button", { name: "契約を追加" }));
+    expect(screen.queryByLabelText(/単価/)).not.toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("取引先"), "client-a");
     await user.type(screen.getByLabelText("名前"), "2027 年度の契約");
     await user.type(screen.getByLabelText("開始日"), "2027-01-01");
-    await user.type(screen.getByLabelText("時間単価"), "5500");
     await user.click(screen.getByRole("checkbox", { name: "案件 X" }));
     await user.click(screen.getByRole("checkbox", { name: "案件 Y" }));
-    await user.type(screen.getByLabelText("案件 Y の単価"), "6000");
     await user.type(screen.getByLabelText("月の下限(時間)"), "140");
     await user.type(screen.getByLabelText("月の上限(時間)"), "180");
     await user.selectOptions(screen.getByLabelText("更新の見込み"), "likely");
@@ -199,13 +188,11 @@ describe("ContractsPage: 契約", () => {
       name: "2027 年度の契約",
       start: "2027-01-01",
       end: null,
-      hourlyRate: 5_500,
       projectIds: ["X", "Y"],
-      projectRates: { Y: 6_000 },
       hoursRange: { minHours: 140, maxHours: 180 },
       renewalOutlook: "likely",
     });
-    expect(await screen.findByRole("status")).toHaveTextContent("保存しました。solidtime に単価を反映しました");
+    expect(await screen.findByRole("status")).toHaveTextContent("保存しました");
   });
 
   it("目安時間が両方空なら hoursRange を送らない", async () => {
@@ -216,10 +203,18 @@ describe("ContractsPage: 契約", () => {
     await user.selectOptions(screen.getByLabelText("取引先"), "client-a");
     await user.type(screen.getByLabelText("名前"), "契約");
     await user.type(screen.getByLabelText("開始日"), "2027-01-01");
-    await user.type(screen.getByLabelText("時間単価"), "5000");
     await user.click(screen.getByRole("checkbox", { name: "案件 X" }));
     await user.click(screen.getByRole("button", { name: "保存" }));
     expect(vi.mocked(api.saveContract).mock.calls[0]![0]).not.toHaveProperty("hoursRange");
+  });
+
+  it("新しい契約では、アーカイブした案件を選べない", async () => {
+    const user = userEvent.setup();
+    renderPage(<ContractsPage api={fakeApi()} newId={newId} />);
+    await user.click(await screen.findByRole("button", { name: "契約を追加" }));
+    await user.selectOptions(screen.getByLabelText("取引先"), "client-a");
+    expect(screen.getByRole("checkbox", { name: "案件 X" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /案件 OLD/ })).not.toBeInTheDocument();
   });
 
   it("取引先を選ぶまで案件は選べず、ほかの取引先の案件は出さない", async () => {
@@ -231,58 +226,16 @@ describe("ContractsPage: 契約", () => {
     expect(screen.queryByRole("checkbox", { name: "案件 X" })).not.toBeInTheDocument();
   });
 
-  it("編集: 画面にない案件ごとの目安時間はそのまま残す", async () => {
+  it("編集: すでに入っているアーカイブした案件は印つきで残り、画面にない項目もそのまま送る", async () => {
     const user = userEvent.setup();
     const api = fakeApi();
     renderPage(<ContractsPage api={api} newId={newId} />);
     await user.click(await screen.findByRole("button", { name: "業務委託契約 を編集" }));
-    const rate = screen.getByLabelText("時間単価");
-    await user.clear(rate);
-    await user.type(rate, "5500");
+    expect(screen.getByRole("checkbox", { name: /案件 OLD\(アーカイブ\)/ })).toBeChecked();
+    const end = screen.getByLabelText("終了日");
+    await user.type(end, "2026-12-31");
     await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(api.saveContract).toHaveBeenCalledWith({ ...contract1, hourlyRate: 5_500 });
-  });
-
-  it("時間単価が正の整数でなければ保存しない", async () => {
-    const user = userEvent.setup();
-    const api = fakeApi();
-    renderPage(<ContractsPage api={api} newId={newId} />);
-    await user.click(await screen.findByRole("button", { name: "業務委託契約 を編集" }));
-    const rate = screen.getByLabelText("時間単価");
-    await user.clear(rate);
-    await user.type(rate, "50.5");
-    await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(api.saveContract).not.toHaveBeenCalled();
-    expect(rate).toHaveAccessibleDescription(/1 円以上の整数/);
-  });
-
-  it("単価の反映に失敗したら、保存はできたことと失敗の理由を出す", async () => {
-    const user = userEvent.setup();
-    const api = fakeApi({
-      saveContract: vi.fn(async () => ({ ok: true, pushRates: { ok: false, error: "Solidtime request failed (HTTP 500)" } })),
-    } as Partial<ApiClient>);
-    renderPage(<ContractsPage api={api} newId={newId} />);
-    await user.click(await screen.findByRole("button", { name: "業務委託契約 を編集" }));
-    await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "契約は保存しました。solidtime への単価の反映に失敗しました: Solidtime request failed (HTTP 500)",
-    );
-  });
-
-  it("solidtime に結びついていない案件は、単価を反映していないことを知らせる", async () => {
-    const user = userEvent.setup();
-    const api = fakeApi({
-      saveContract: vi.fn(async () => ({
-        ok: true,
-        pushRates: { ok: true, pushed: [{ projectId: "X", hourlyRate: 5_000 }], skipped: [{ projectId: "Y", reason: "noSolidtimeProject" }] },
-      })),
-    } as Partial<ApiClient>);
-    renderPage(<ContractsPage api={api} newId={newId} />);
-    await user.click(await screen.findByRole("button", { name: "業務委託契約 を編集" }));
-    await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(
-      await screen.findByText("案件 Y は solidtime のプロジェクトに結びついていないため、単価を反映していません"),
-    ).toBeInTheDocument();
+    expect(api.saveContract).toHaveBeenCalledWith({ ...contract1, end: "2026-12-31" });
   });
 
   it("契約の期間が重なるなどでサーバーが断ったら、その理由を出す", async () => {

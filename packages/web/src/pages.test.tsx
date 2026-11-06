@@ -29,6 +29,8 @@ const outlook = {
 const dashboard: Dashboard = {
   asOf: "2026-11-15",
   projectNames: { X: "案件 X" },
+  projectsWithoutClient: [],
+  projectsWithoutRate: [],
   unlinked: [] as { solidtimeProjectId: string | null; seconds: number }[],
   months: [
     { month: "2026-11", contracts: [outlook] },
@@ -66,6 +68,7 @@ const fakeApi = (over: Partial<ApiClient> = {}): ApiClient =>
       invoiceDate: "2026-11-30",
       dueDate: "2026-12-31",
       lines: [{ item: "案件 X 2026年11月分", quantity: 37.25, unit: "時間", unitPrice: 5_000, amount: 186_250 }],
+      warnings: [],
       note: null,
       subtotal: 186_250,
       tax: 18_625,
@@ -248,6 +251,7 @@ describe("InvoiceGuidePage: レビューを受けて足した振る舞い", () =
       invoiceDate: "2026-11-30",
       dueDate: "2026-12-31",
       lines: [],
+      warnings: [],
       note: null,
       subtotal: 0,
       tax: 0,
@@ -333,4 +337,24 @@ describe("InvoiceGuidePage", () => {
     await userEvent.type(month, "2026-10");
     expect(api.invoiceGuide).toHaveBeenLastCalledWith({ clientId: "client-a", month: "2026-10" });
   });
+});
+
+it("取引先なし・単価なしの案件を名前と対処方法つきで知らせる", async () => {
+  renderPage(<DashboardPage api={fakeApi({ dashboard: vi.fn(async () => ({
+    ...dashboard, projectsWithoutClient: [{ id: "X", name: "案件 X" }], projectsWithoutRate: [{ id: "Y", name: "案件 Y" }],
+  })) })} />);
+  expect(await screen.findByText(/案件 X は取引先が未設定/)).toHaveTextContent("solidtime で取引先を設定");
+  expect(screen.getByText(/案件 Y は単価が未設定/)).toHaveTextContent("請求見込み額に含めていません");
+});
+
+it("請求明細が全件単価なしでも、除外した時間と警告を表示する", async () => {
+  const user = userEvent.setup();
+  renderPage(<InvoiceGuidePage defaultMonth="2026-11" api={fakeApi({ invoiceGuide: vi.fn(async () => ({
+    clientName: "A 社", subject: "11月分", invoiceDate: "2026-11-30", dueDate: "2026-12-31",
+    lines: [], subtotal: 0, tax: 0, total: 0, note: null,
+    warnings: [{ kind: "missingRate" as const, projectId: "Y", projectName: "案件 Y", seconds: 3 * HOUR }],
+  })) })} />);
+  await user.selectOptions(await screen.findByLabelText("取引先"), "client-a");
+  expect(await screen.findByText("案件 Y は単価が未設定のため、3 時間 を請求に入れていません")).toBeInTheDocument();
+  expect(screen.getByText("請求に含められる明細はありません")).toBeInTheDocument();
 });

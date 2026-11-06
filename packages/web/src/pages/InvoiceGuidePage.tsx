@@ -3,7 +3,7 @@ import type { InvoiceGuide } from "@fpm/domain";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../api-client.ts";
 import { errorMessage } from "../errors.ts";
-import { formatYen } from "../format.ts";
+import { formatHours, formatYen } from "../format.ts";
 import { useApiQuery } from "../use-api-query.ts";
 
 const monthPattern = /^[0-9]{4}-(0[1-9]|1[0-2])$/;
@@ -43,6 +43,10 @@ function GuideContent({ guide }: { guide: InvoiceGuide }) {
     <section className="guide-content page-stack" aria-label={`${guide.clientName} の請求書ガイド`}>
       <div className="section-heading"><h2>{guide.clientName} の請求内容</h2></div>
       {notice && <Alert key={notice.id} tone={notice.error ? "danger" : "success"}>{notice.text}</Alert>}
+      {guide.warnings.map((warning) => <Alert key={warning.projectId} tone="warning">
+        {warning.projectName} は単価が未設定のため、{formatHours(warning.seconds)} を請求に入れていません
+      </Alert>)}
+      {guide.lines.length === 0 && <EmptyState title="請求に含められる明細はありません" />}
       <dl className="guide-fields">
         {[
           { label: "件名", value: guide.subject },

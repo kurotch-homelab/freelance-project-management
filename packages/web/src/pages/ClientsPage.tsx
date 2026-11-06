@@ -3,12 +3,12 @@ import { useCallback, useState } from "react";
 import type { Client } from "../api-client.ts";
 import { useApiQuery } from "../use-api-query.ts";
 import {
-  MasterForm, MasterTable, QueryFeedback, SaveFeedback, randomId, useMasterEditor,
+  MasterForm, MasterTable, QueryFeedback, SaveFeedback, useMasterEditor,
   type EditorFormProps, type FieldErrors, type MasterPageProps,
 } from "./master-page.tsx";
 
 const days = [
-  ...Array.from({ length: 28 }, (_, i) => ({ value: String(i + 1), label: `${i + 1}日` })),
+  ...Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1}日` })),
   { value: "end", label: "月末" },
 ];
 const monthName = (offset: number) => ["当月", "翌月", "翌々月"][offset] ?? `${offset}か月後`;
@@ -26,13 +26,12 @@ function ClientForm({ initial, title, saving, onCancel, onSave }: EditorFormProp
   const [errors, setErrors] = useState<FieldErrors>({});
   function submit() {
     const next: FieldErrors = {};
-    if (!value.name.trim()) next.name = "名前を入力してください";
     if (!value.subjectTemplate.trim()) next.subjectTemplate = "件名のひな形を入力してください";
     const terms = value.paymentTerms;
     for (const field of ["closingDay", "paymentDay"] as const) {
       const day = terms[field];
-      if (day !== "end" && (!Number.isInteger(day) || day < 1 || day > 28)) {
-        next[field] = "1〜28日または月末を選択してください";
+      if (day !== "end" && (!Number.isInteger(day) || day < 1 || day > 31)) {
+        next[field] = "1〜31日または月末を選択してください";
       }
     }
     if (!Number.isInteger(terms.paymentMonthOffset) || terms.paymentMonthOffset < 0 || terms.paymentMonthOffset > 12) {
@@ -46,8 +45,6 @@ function ClientForm({ initial, title, saving, onCancel, onSave }: EditorFormProp
     if (Object.keys(next).length === 0) onSave(value);
   }
   return <MasterForm {...{ title, saving, errors, onCancel }} onSubmit={submit}>
-    <TextField label="名前" name="name" value={value.name} required error={errors.name}
-      onValueChange={(name) => setValue({ ...value, name })} />
     <div className="form-grid">
       <Select label="締め日" name="closingDay" value={String(value.paymentTerms.closingDay)} options={days} required
         error={errors.closingDay} onValueChange={(day) => setValue({ ...value, paymentTerms: { ...value.paymentTerms, closingDay: dayValue(day) } })} />
@@ -65,30 +62,26 @@ function ClientForm({ initial, title, saving, onCancel, onSave }: EditorFormProp
   </MasterForm>;
 }
 
-export function ClientsPage({ api, newId = randomId }: MasterPageProps) {
+export function ClientsPage({ api }: MasterPageProps) {
   const clients = useApiQuery(useCallback(() => api.listClients(), [api]));
   const editor = useMasterEditor<Client>(clients.reload);
   return <div className="page-stack">
     <div className="master-heading">
-      <div className="page-heading"><h1>取引先</h1><p className="muted">取引先と請求書の支払条件を管理します。</p></div>
-      <Button variant="primary" disabled={editor.editing !== null || editor.saving} onClick={() => editor.open({
-        id: newId(), name: "", paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" },
-        subjectTemplate: "{YYYY}年{M}月分 業務委託料", lineGrouping: "project", solidtimeClientId: null, driveFolderId: null,
-      }, "取引先を追加")}>取引先を追加</Button>
+      <div className="page-heading"><h1>取引先</h1><p className="muted">取引先の追加や名前の変更は solidtime で行います</p></div>
     </div>
     <SaveFeedback notice={editor.notice} />
     {editor.editing && <ClientForm initial={editor.editing.value} title={editor.editing.title} saving={editor.saving}
-      onCancel={editor.cancel} onSave={(client) => void editor.save(() => api.saveClient(client))} />}
+      onCancel={editor.cancel} onSave={(client) => void editor.save(() => api.saveClientBilling(client.id, { paymentTerms: client.paymentTerms, subjectTemplate: client.subjectTemplate, lineGrouping: client.lineGrouping }))} />}
     <QueryFeedback label="取引先" query={clients} />
     {clients.data && <MasterTable label="取引先">
       <thead><tr><th scope="col">名前</th><th scope="col">支払条件</th><th scope="col">明細のまとめ方</th><th scope="col">操作</th></tr></thead>
       <tbody>{clients.data.map((client) => <tr key={client.id}>
         <th scope="row">{client.name}</th><td>{paymentTermsText(client.paymentTerms)}</td>
         <td>{client.lineGrouping === "project" ? "案件ごと" : "契約ごと"}</td>
-        <td><Button size="sm" aria-label={`${client.name} を編集`} disabled={editor.editing !== null || editor.saving}
-          onClick={() => editor.open(client, `${client.name} を編集`)}>編集</Button></td>
+        <td><Button size="sm" aria-label={`${client.name} の請求の設定を変える`} disabled={editor.editing !== null || editor.saving}
+          onClick={() => editor.open(client, `${client.name} の請求の設定を変える`)}>請求の設定</Button></td>
       </tr>)}</tbody>
     </MasterTable>}
-    {clients.data?.length === 0 && <EmptyState title="取引先が登録されていません" description="「取引先を追加」から登録してください。" />}
+    {clients.data?.length === 0 && <EmptyState title="取引先が登録されていません" description="solidtime で追加して同期してください。" />}
   </div>;
 }

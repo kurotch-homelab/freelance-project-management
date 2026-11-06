@@ -82,15 +82,15 @@ function readClient(row: Selectable<ClientsTable>): ClientRecord {
     },
     subjectTemplate: row.subject_template,
     lineGrouping: row.line_grouping,
-    solidtimeClientId: row.solidtime_client_id,
+    archived: row.archived === 1,
     driveFolderId: row.drive_folder_id,
   };
 }
 
 function readProject(row: Selectable<ProjectsTable>): ProjectRecord {
   return {
-    id: row.id, clientId: row.client_id, name: row.name, status: row.status,
-    solidtimeProjectId: row.solidtime_project_id, driveFolderId: row.drive_folder_id,
+    id: row.id, clientId: row.client_id, name: row.name, archived: row.archived === 1,
+    hourlyRate: row.hourly_rate === null ? null : Number(row.hourly_rate), driveFolderId: row.drive_folder_id,
   };
 }
 
@@ -100,7 +100,7 @@ async function readContracts(db: Database, filter: ClientFilter = {}): Promise<C
     .innerJoin("contract_projects as p", "p.contract_id", "c.id")
     .selectAll("c")
     .select([
-      "p.project_id", "p.position", "p.hourly_rate as project_rate",
+      "p.project_id", "p.position",
       "p.min_seconds as project_min_seconds", "p.max_seconds as project_max_seconds",
       "p.has_hours_range as project_has_hours_range",
     ]);
@@ -118,11 +118,8 @@ async function readContracts(db: Database, filter: ClientFilter = {}): Promise<C
     const row = projects[0]!;
     contracts.push({
       id: row.id, clientId: row.client_id, name: row.name,
-      start: row.start_date, end: row.end_date, hourlyRate: integer(row.hourly_rate),
+      start: row.start_date, end: row.end_date,
       projectIds: projects.map((p) => p.project_id),
-      projectRates: Object.fromEntries(projects
-        .filter((p) => p.project_rate !== null)
-        .map((p) => [p.project_id, integer(p.project_rate!)])),
       ...(row.has_hours_range ? { hoursRange: readRange(row.min_seconds, row.max_seconds) } : {}),
       ...(row.has_project_hours_ranges ? {
         projectHoursRanges: Object.fromEntries(projects
@@ -136,18 +133,52 @@ async function readContracts(db: Database, filter: ClientFilter = {}): Promise<C
 }
 
 export function createRepository(db: Database): Repository {
+  const transaction = <T>(run: (tx: Database) => Promise<T>): Promise<T> =>
+    db.isTransaction ? run(db) : db.transaction().execute(run);
   return {
-    async saveClient(client) {
-      validatePaymentTerms(client.paymentTerms);
-      const row = {
-        id: client.id, name: client.name,
-        closing_day: String(client.paymentTerms.closingDay),
-        payment_month_offset: client.paymentTerms.paymentMonthOffset,
-        payment_day: String(client.paymentTerms.paymentDay),
-        subject_template: client.subjectTemplate, line_grouping: client.lineGrouping,
-        solidtime_client_id: client.solidtimeClientId, drive_folder_id: client.driveFolderId,
-      };
-      await db.insertInto("clients").values(row).onConflict((c) => c.column("id").doUpdateSet(row)).execute();
+    async syncSolidtimeCatalog({ clients, projects }) {
+      await transaction(async (tx) => {
+        await tx.updateTable("clients").set({ archived: 1 }).execute();
+        await tx.updateTable("projects").set({ archived: 1 }).execute();
+        for (const client of clients) {
+          const source = { name: client.name, archived: Number(client.archived) };
+          await tx.insertInto("clients").values({
+            id: client.id, ...source, closing_day: "end", payment_month_offset: 1, payment_day: "end",
+            subject_template: "{YYYY}年{M}月分 業務委託料", line_grouping: "project", drive_folder_id: null,
+          }).onConflict((c) => c.column("id").doUpdateSet(source)).execute();
+        }
+        for (const project of projects) {
+          if (project.hourlyRate !== null && (!Number.isFinite(project.hourlyRate) || project.hourlyRate < 0)) {
+            throw new RangeError("hourlyRate must be non-negative or null");
+          }
+          const source = { name: project.name, client_id: project.clientId, archived: Number(project.archived), hourly_rate: project.hourlyRate };
+          await tx.insertInto("projects").values({ id: project.id, ...source, drive_folder_id: null })
+            .onConflict((c) => c.column("id").doUpdateSet(source)).execute();
+        }
+      });
+    },
+    async replaceSolidtimeData(catalog, period, entries) {
+      await transaction(async (tx) => {
+        const repo = createRepository(tx);
+        await repo.syncSolidtimeCatalog(catalog);
+        await repo.replaceTimeEntries(period, entries);
+      });
+    },
+    async updateClientBilling(id, billing) {
+      validatePaymentTerms(billing.paymentTerms);
+      const result = await db.updateTable("clients").set({
+        closing_day: String(billing.paymentTerms.closingDay),
+        payment_month_offset: billing.paymentTerms.paymentMonthOffset,
+        payment_day: String(billing.paymentTerms.paymentDay),
+        subject_template: billing.subjectTemplate, line_grouping: billing.lineGrouping,
+      }).where("id", "=", id).executeTakeFirst();
+      if (result.numUpdatedRows === 0n) throw new RangeError(`Client not found: ${id}`);
+    },
+    async setClientDriveFolder(id, folderId) {
+      await db.updateTable("clients").set({ drive_folder_id: folderId }).where("id", "=", id).execute();
+    },
+    async setProjectDriveFolder(id, folderId) {
+      await db.updateTable("projects").set({ drive_folder_id: folderId }).where("id", "=", id).execute();
     },
     async getClient(id) {
       const row = await db.selectFrom("clients").selectAll().where("id", "=", id).executeTakeFirst();
@@ -157,46 +188,21 @@ export function createRepository(db: Database): Repository {
       return (await db.selectFrom("clients").selectAll().execute()).map(readClient)
         .sort((a, b) => compare(a.name, b.name) || compare(a.id, b.id));
     },
-    async saveProject(project) {
-      const row = {
-        id: project.id, client_id: project.clientId, name: project.name, status: project.status,
-        solidtime_project_id: project.solidtimeProjectId, drive_folder_id: project.driveFolderId,
-      };
-      await db.transaction().execute(async (tx) => {
-        // Use the same client lock as saveContract before checking membership.
-        await tx.updateTable("clients").set((eb) => ({ id: eb.ref("id") }))
-          .where("id", "in", tx.selectFrom("projects").select("client_id").where("id", "=", project.id))
-          .execute();
-        const saved = await tx.selectFrom("projects").select("client_id")
-          .where("id", "=", project.id).executeTakeFirst();
-        if (saved !== undefined && saved.client_id !== project.clientId) {
-          const membership = await tx.selectFrom("contract_projects").select("contract_id")
-            .where("project_id", "=", project.id).executeTakeFirst();
-          if (membership !== undefined) {
-            throw new RangeError("Cannot change the client of a project that belongs to a contract");
-          }
-        }
-        await tx.insertInto("projects").values(row).onConflict((c) => c.column("id").doUpdateSet(row)).execute();
-      });
-    },
     async listProjects(filter = {}) {
       let query = db.selectFrom("projects").selectAll();
+      if (!filter.includeArchived) query = query.where("archived", "=", 0);
       if (filter.clientId !== undefined) query = query.where("client_id", "=", filter.clientId);
       return (await query.execute()).map(readProject)
         .sort((a, b) => compare(a.name, b.name) || compare(a.id, b.id));
     },
-    async findProjectBySolidtimeId(id) {
-      const row = await db.selectFrom("projects").selectAll()
-        .where("solidtime_project_id", "=", id).executeTakeFirst();
-      return row ? readProject(row) : null;
-    },
     listContracts: (filter) => readContracts(db, filter),
     async saveContract(contract) {
-      await db.transaction().execute(async (tx) => {
+      await transaction(async (tx) => {
         // Lock the client row before reading contracts. Concurrent PostgreSQL saves
         // for that client's projects must not both pass the overlap validation.
-        await tx.updateTable("clients").set({ id: contract.clientId })
-          .where("id", "=", contract.clientId).returning("id").executeTakeFirstOrThrow();
+        const client = await tx.updateTable("clients").set({ id: contract.clientId })
+          .where("id", "=", contract.clientId).returning("id").executeTakeFirst();
+        if (!client) throw new RangeError(`Client not found: ${contract.clientId}`);
         const saved = await readContracts(tx);
         validateContracts([...saved.filter((c) => c.id !== contract.id), contract]);
         const projects = await tx.selectFrom("projects").select(["id", "client_id"])
@@ -206,7 +212,7 @@ export function createRepository(db: Database): Repository {
         }
         const row = {
           id: contract.id, client_id: contract.clientId, name: contract.name,
-          start_date: contract.start, end_date: contract.end, hourly_rate: contract.hourlyRate,
+          start_date: contract.start, end_date: contract.end,
           ...rangeColumns(contract.hoursRange),
           has_hours_range: Number(contract.hoursRange !== undefined),
           has_project_hours_ranges: Number(contract.projectHoursRanges !== undefined),
@@ -218,7 +224,6 @@ export function createRepository(db: Database): Repository {
         await tx.deleteFrom("contract_projects").where("contract_id", "=", contract.id).execute();
         const projectRows = contract.projectIds.map((projectId, position) => ({
           contract_id: contract.id, project_id: projectId, position,
-          hourly_rate: Object.hasOwn(contract.projectRates, projectId) ? contract.projectRates[projectId]! : null,
           ...rangeColumns(contract.projectHoursRanges?.[projectId]),
           has_hours_range: Number(Object.hasOwn(contract.projectHoursRanges ?? {}, projectId)),
         }));
@@ -226,7 +231,7 @@ export function createRepository(db: Database): Repository {
       });
     },
     async saveHoursRangeOverride(override) {
-      await db.transaction().execute(async (tx) => {
+      await transaction(async (tx) => {
         effectiveHoursRange({}, [override], override.month);
         const row = {
           id: JSON.stringify([override.contractId, override.projectId, override.month]),
@@ -268,7 +273,7 @@ export function createRepository(db: Database): Repository {
           start_at: entry.start ?? null, end_at: entry.end ?? null,
         };
       });
-      await db.transaction().execute(async (tx) => {
+      await transaction(async (tx) => {
         await tx.deleteFrom("time_entries").where("date", ">=", period.from).where("date", "<=", period.to).execute();
         for (const batch of batches(rows)) await tx.insertInto("time_entries").values(batch).execute();
       });
@@ -276,7 +281,7 @@ export function createRepository(db: Database): Repository {
     async listDailyWork(period) {
       assertPeriod(period);
       const rows = await db.selectFrom("time_entries as e")
-        .innerJoin("projects as p", "p.solidtime_project_id", "e.solidtime_project_id")
+        .innerJoin("projects as p", "p.id", "e.solidtime_project_id")
         .select(["p.id as projectId", "e.date"])
         .select((eb) => eb.fn.sum<StoredInteger>("e.seconds").as("seconds"))
         .where("e.billable", "=", 1).where("e.date", ">=", period.from).where("e.date", "<=", period.to)
@@ -287,7 +292,7 @@ export function createRepository(db: Database): Repository {
     async listUnlinkedSolidtimeProjects(period) {
       assertPeriod(period);
       const rows = await db.selectFrom("time_entries as e")
-        .leftJoin("projects as p", "p.solidtime_project_id", "e.solidtime_project_id")
+        .leftJoin("projects as p", "p.id", "e.solidtime_project_id")
         .select("e.solidtime_project_id as solidtimeProjectId")
         .select((eb) => eb.fn.sum<StoredInteger>("e.seconds").as("seconds"))
         .where("p.id", "is", null).where("e.billable", "=", 1)
@@ -302,7 +307,7 @@ export function createRepository(db: Database): Repository {
         assertWithinPeriod(date, period);
         return { date, seconds: integer(seconds) };
       });
-      await db.transaction().execute(async (tx) => {
+      await transaction(async (tx) => {
         await tx.deleteFrom("absences").where("date", ">=", period.from).where("date", "<=", period.to).execute();
         for (const batch of batches(rows)) await tx.insertInto("absences").values(batch).execute();
       });

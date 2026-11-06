@@ -14,7 +14,7 @@ const clientA = {
   paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" },
   subjectTemplate: "{YYYY}年{M}月分 業務委託料",
   lineGrouping: "project",
-  solidtimeClientId: "st-client-a",
+  archived: false,
   driveFolderId: null,
 } as const;
 
@@ -22,11 +22,11 @@ const projectX = {
   id: "X",
   clientId: "client-a",
   name: "案件 X",
-  status: "active",
-  solidtimeProjectId: "st-x",
+  archived: false,
+  hourlyRate: 5_000,
   driveFolderId: null,
 } as const;
-const projectY = { ...projectX, id: "Y", name: "案件 Y", solidtimeProjectId: "st-y" } as const;
+const projectY = { ...projectX, id: "Y", name: "案件 Y", hourlyRate: 7_000 } as const;
 
 const contract1: Contract = {
   id: "c1",
@@ -34,9 +34,8 @@ const contract1: Contract = {
   name: "業務委託契約",
   start: "2026-01-01",
   end: null,
-  hourlyRate: 5_000,
   projectIds: ["X", "Y"],
-  projectRates: { Y: 7_000 },
+
   hoursRange: { minHours: 140, maxHours: 180 },
   renewalOutlook: "undecided",
 };
@@ -58,8 +57,11 @@ const mondays = ["2026-11-09", "2026-11-02", "2026-10-26", "2026-10-19", "2026-1
 
 const fakes = () => ({
   solidtime: {
-    listTimeEntries: vi.fn(async () => mondays.map((d, i) => stEntry(`e${i}`, "st-x", d, 4 * HOUR))),
-    setProjectRate: vi.fn(async (projectId: string, hourlyRate: number) => ({ id: projectId, hourlyRate })),
+    listTimeEntries: vi.fn(async () => mondays.map((d, i) => stEntry(`e${i}`, "X", d, 4 * HOUR))),
+    listClients: vi.fn(async () => [{ id: clientA.id, name: clientA.name, isArchived: false }]),
+    listProjectsWithRates: vi.fn(async () => [projectX, projectY].map((p) => ({
+      ...p, isArchived: p.archived, color: "#ef5350", isBillable: true, isPublic: false, estimatedTime: null,
+    }))),
   },
   calendar: {
     listOutOfOffice: vi.fn(async () => [
@@ -87,9 +89,7 @@ describe("createApp: ユースケース", () => {
     db = await createDatabase({ kind: "sqlite", filename: ":memory:" });
     await migrateToLatest(db);
     repo = createRepository(db);
-    await repo.saveClient(clientA);
-    await repo.saveProject(projectX);
-    await repo.saveProject(projectY);
+    await repo.syncSolidtimeCatalog({ clients: [clientA], projects: [projectX, projectY] });
     await repo.saveContract(contract1);
     f = fakes();
     const deps: AppDeps = {
@@ -118,7 +118,7 @@ describe("createApp: ユースケース", () => {
 
     it("成功を記録し、案件に結びついていない solidtime のプロジェクトを返す", async () => {
       f.solidtime.listTimeEntries.mockResolvedValueOnce([
-        stEntry("a", "st-x", "2026-11-10", HOUR),
+        stEntry("a", "X", "2026-11-10", HOUR),
         stEntry("b", "st-unknown", "2026-11-10", 2 * HOUR),
       ]);
       const result = await app.syncSolidtime();
@@ -137,6 +137,16 @@ describe("createApp: ユースケース", () => {
     });
   });
 
+  it.each(["listClients", "listProjectsWithRates", "listTimeEntries"] as const)("%s が失敗してもカタログと打刻を保持し、次の同期は実行できる", async (method) => {
+    await app.syncSolidtime();
+    const catalog = await repo.listProjects({ includeArchived: true });
+    f.solidtime[method].mockRejectedValueOnce(new Error("catalog unavailable"));
+    await expect(app.syncSolidtime()).resolves.toEqual({ ok: false, error: "catalog unavailable" });
+    await expect(repo.listProjects({ includeArchived: true })).resolves.toEqual(catalog);
+    await expect(repo.listDailyWork({ from: "2026-09-20", to: "2026-11-15" })).resolves.toHaveLength(8);
+    await expect(app.syncSolidtime()).resolves.toMatchObject({ ok: true });
+  });
+
   describe("同期の重なり", () => {
     it("同じ同期が実行中なら、次の同期は実行せず busy を返す", async () => {
       let release: () => void = () => {};
@@ -144,6 +154,7 @@ describe("createApp: ユースケース", () => {
         () => new Promise((resolve) => (release = () => resolve([]))),
       );
       const first = app.syncSolidtime();
+      await vi.waitFor(() => expect(f.solidtime.listTimeEntries).toHaveBeenCalledTimes(1));
       await expect(app.syncSolidtime()).resolves.toEqual({ ok: false, error: "busy" });
       release();
       await expect(first).resolves.toMatchObject({ ok: true });
@@ -156,6 +167,7 @@ describe("createApp: ユースケース", () => {
         () => new Promise((resolve) => (release = () => resolve([]))),
       );
       const first = app.syncSolidtime();
+      await vi.waitFor(() => expect(f.solidtime.listTimeEntries).toHaveBeenCalledTimes(1));
       await expect(app.syncCalendar()).resolves.toEqual({ ok: true });
       release();
       await first;
@@ -167,6 +179,7 @@ describe("createApp: ユースケース", () => {
         () => new Promise((resolve) => (release = () => resolve([]))),
       );
       const first = app.syncSolidtime();
+      await vi.waitFor(() => expect(f.solidtime.listTimeEntries).toHaveBeenCalledTimes(1));
       await app.syncSolidtime();
       release();
       await first;
@@ -189,38 +202,6 @@ describe("createApp: ユースケース", () => {
       f.calendar.listOutOfOffice.mockRejectedValueOnce(new Error("Google API request failed (HTTP 403)"));
       await expect(app.syncCalendar()).resolves.toEqual({ ok: false, error: "Google API request failed (HTTP 403)" });
       await expect(repo.getSyncStatus("calendar")).resolves.toMatchObject({ lastFailure: { error: "Google API request failed (HTTP 403)" } });
-    });
-  });
-
-  describe("pushRates: 契約の単価を solidtime に反映する", () => {
-    it("今日有効な契約の単価(案件ごとの上書きを含む)を、各案件の solidtime プロジェクトに送る", async () => {
-      await expect(app.pushRates("c1")).resolves.toEqual({
-        pushed: [
-          { projectId: "X", hourlyRate: 5_000 },
-          { projectId: "Y", hourlyRate: 7_000 },
-        ],
-        skipped: [],
-      });
-      expect(f.solidtime.setProjectRate).toHaveBeenCalledWith("st-x", 5_000);
-      expect(f.solidtime.setProjectRate).toHaveBeenCalledWith("st-y", 7_000);
-    });
-
-    it("今日まだ始まっていない契約は送らない", async () => {
-      await repo.saveContract({ ...contract1, id: "c1", end: "2026-12-31" });
-      await repo.saveContract({ ...contract1, id: "c2", start: "2027-01-01", end: null, hourlyRate: 6_000 });
-      await expect(app.pushRates("c2")).resolves.toEqual({ pushed: [], skipped: [{ projectId: null, reason: "notActiveToday" }] });
-      expect(f.solidtime.setProjectRate).not.toHaveBeenCalled();
-    });
-
-    it("solidtime のプロジェクトに結びついていない案件は飛ばして理由を返す", async () => {
-      await repo.saveProject({ ...projectY, solidtimeProjectId: null });
-      const result = await app.pushRates("c1");
-      expect(result.skipped).toEqual([{ projectId: "Y", reason: "noSolidtimeProject" }]);
-      expect(result.pushed).toEqual([{ projectId: "X", hourlyRate: 5_000 }]);
-    });
-
-    it("ない契約は受け付けない", async () => {
-      await expect(app.pushRates("nope")).rejects.toThrow(RangeError);
     });
   });
 
@@ -255,7 +236,7 @@ describe("createApp: ユースケース", () => {
 
     it("案件に結びついていない solidtime の稼働を返す(先月の初めから今日まで。請求に入らないので知らせる)", async () => {
       f.solidtime.listTimeEntries.mockResolvedValueOnce([
-        stEntry("a", "st-x", "2026-11-10", HOUR),
+        stEntry("a", "X", "2026-11-10", HOUR),
         stEntry("b", "st-unknown", "2026-11-10", 2 * HOUR),
         stEntry("c", "st-unknown", "2026-10-01", HOUR),
       ]);

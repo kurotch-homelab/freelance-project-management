@@ -4,7 +4,8 @@ import { weekdayAverages, type DailyWork } from "./weekday-average.ts";
 
 export interface ForecastProject {
   readonly projectId: string;
-  readonly clientId: string;
+  readonly clientId: string | null;
+  readonly archived?: boolean;
   readonly history: readonly DailyWork[];
 }
 
@@ -56,7 +57,7 @@ export function forecastDays(input: ForecastInput): readonly ForecastRow[] {
   const options = { asOf, weeks };
   const projectIds = new Set<string>();
   const allWork = new Map<string, number>();
-  const clientWork = new Map<string, Map<string, number>>();
+  const clientWork = new Map<string | null, Map<string, number>>();
   const projectForecasts = projects.map((project) => {
     if (projectIds.has(project.projectId)) {
       throw new RangeError("projectId must be unique");
@@ -99,12 +100,13 @@ export function forecastDays(input: ForecastInput): readonly ForecastRow[] {
     const date = formatDate(day);
     const index = weekday(day);
     const active = forecasts.flatMap((forecast) => {
+      if (forecast.project.archived) return [];
       const coverage = contractCoverage(contracts, forecast.project.projectId, date);
       return coverage === null ? [] : [{ ...forecast, assumesRenewal: coverage.assumesRenewal }];
     });
 
-    const projectSecondsByClient = new Map<string, number>();
-    const clientCounts = new Map<string, number>();
+    const projectSecondsByClient = new Map<string | null, number>();
+    const clientCounts = new Map<string | null, number>();
     for (const { project, averages, source } of active) {
       if (source === "project") {
         projectSecondsByClient.set(

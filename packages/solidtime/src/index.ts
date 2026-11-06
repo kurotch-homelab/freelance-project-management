@@ -3,7 +3,6 @@ export { SolidtimeApiError, SolidtimeAuthError } from "./errors.ts";
 export type { DailyWork } from "@fpm/domain";
 export type {
   Client,
-  CreateProjectInput,
   ListTimeEntriesOptions,
   Project,
   ProjectDailyWork,

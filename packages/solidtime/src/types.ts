@@ -52,22 +52,10 @@ export interface Project {
   readonly estimatedTime: number | null;
 }
 
-export interface CreateProjectInput {
-  readonly name: string;
-  readonly clientId?: string | null;
-  readonly hourlyRate?: number | null;
-  readonly color?: string;
-  readonly isBillable?: boolean;
-  readonly isPublic?: boolean;
-  readonly estimatedTime?: number | null;
-}
-
 export interface SolidtimeClient {
   listTimeEntries(options: ListTimeEntriesOptions): Promise<TimeEntry[]>;
   dailyWork(options: ListTimeEntriesOptions): Promise<ProjectDailyWork[]>;
   listProjects(): Promise<Project[]>;
   listClients(): Promise<Client[]>;
-  createClient(name: string): Promise<Client>;
-  createProject(input: CreateProjectInput): Promise<Project>;
-  setProjectRate(projectId: string, hourlyRate: number): Promise<Project>;
+  listProjectsWithRates(): Promise<Project[]>;
 }
