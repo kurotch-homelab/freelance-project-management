@@ -159,13 +159,15 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
       const asOf = today();
       const periods = forecastPeriods(asOf, config.forecastMonths);
       const until = periods.at(-1)!.to;
-      const [projects, contracts, history, absenceSeconds, solidtimeStatus, calendarStatus] = await Promise.all([
+      const previousMonthStart = `${addDays(`${asOf.slice(0, 7)}-01`, -1).slice(0, 7)}-01`;
+      const [projects, contracts, history, absenceSeconds, solidtimeStatus, calendarStatus, unlinked] = await Promise.all([
         repo.listProjects(),
         repo.listContracts(),
         repo.listDailyWork({ from: historyStart(asOf), to: asOf }),
         repo.listAbsences({ from: asOf, to: until }),
         repo.getSyncStatus("solidtime"),
         repo.getSyncStatus("calendar"),
+        repo.listUnlinkedSolidtimeProjects({ from: previousMonthStart, to: asOf }),
       ]);
       const forecast = forecastDays({
         asOf,
@@ -189,7 +191,13 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
           contracts: monthOutlook({ month, asOf, contracts, actual, forecast, hoursRangeOverrides }),
         };
       }));
-      return { asOf, months, sync: { solidtime: solidtimeStatus, calendar: calendarStatus } };
+      return {
+        asOf,
+        projectNames: Object.fromEntries(projects.map((project) => [project.id, project.name])),
+        unlinked,
+        months,
+        sync: { solidtime: solidtimeStatus, calendar: calendarStatus },
+      };
     },
 
     async invoiceGuide({ clientId, month }: { clientId: string; month: string }) {

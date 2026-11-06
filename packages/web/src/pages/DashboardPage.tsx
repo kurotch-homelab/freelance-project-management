@@ -9,8 +9,12 @@ import { useApiQuery } from "../use-api-query.ts";
 const sources = ["solidtime", "calendar"] as const;
 const sourceNames: Record<SyncSource, string> = { solidtime: "solidtime", calendar: "カレンダー" };
 
+function formatWarningHours(seconds: number): string {
+  return seconds > 0 && seconds < 36 ? "0.01 時間未満" : formatHours(seconds);
+}
+
 function warningText(warning: HoursRangeWarning): string {
-  const hours = formatHours(warning.seconds);
+  const hours = formatWarningHours(warning.seconds);
   switch (warning.kind) {
     case "belowMinForecast": return `下限まで ${hours} 不足の見込み`;
     case "aboveMaxForecast": return `上限を ${hours} 超える見込み`;
@@ -81,9 +85,15 @@ export function DashboardPage({ api }: { api: ApiClient }) {
           <div className="sync-grid">
             {sources.map((source) => {
               const status = query.data!.sync[source];
+              const isStale = status.lastFailure !== null && (
+                status.lastSuccessAt === null || Date.parse(status.lastFailure.at) > Date.parse(status.lastSuccessAt)
+              );
               return (
                 <div className="sync-source" key={source}>
                   <h3>{sourceNames[source]}</h3>
+                  {isStale && <p className="sync-error">
+                    {sourceNames[source]}{source === "solidtime" ? " " : ""}未更新(前回取り込んだ内容で見込みを出しています)
+                  </p>}
                   <dl className="sync-details">
                     <div><dt>最終成功日時</dt><dd>{status.lastSuccessAt
                       ? <time dateTime={status.lastSuccessAt}>{formatTimestamp(status.lastSuccessAt)}</time>
@@ -103,6 +113,16 @@ export function DashboardPage({ api }: { api: ApiClient }) {
             })}
           </div>
         </section>
+
+        {query.data.unlinked.length > 0 && (
+          <Alert tone="warning" title="案件に結びついていない solidtime の稼働があります(請求に入りません)">
+            {query.data.unlinked.map(({ solidtimeProjectId, seconds }) => (
+              <p key={solidtimeProjectId === null ? "unassigned" : `project:${solidtimeProjectId}`}>
+                {solidtimeProjectId ?? "プロジェクトなし"}: {formatWarningHours(seconds)}
+              </p>
+            ))}
+          </Alert>
+        )}
 
         {query.data.months.length === 0 && <EmptyState title="表示する見込みはありません" description="同期して最新のデータを取得してください。" />}
         {query.data.months.map(({ month, contracts }) => (
@@ -128,6 +148,11 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                           <div className="badges">
                             {contract.assumesRenewal && <Badge tone="info">更新前提</Badge>}
                             {contract.warnings.map((warning) => <Badge key={warning.kind} tone={warning.kind === "aboveMaxActual" ? "danger" : "warning"}>{warningText(warning)}</Badge>)}
+                            {contract.projects.flatMap((project) => project.warnings.map((warning) => (
+                              <Badge key={`${project.projectId}:${warning.kind}`} tone={warning.kind === "aboveMaxActual" ? "danger" : "warning"}>
+                                {query.data!.projectNames[project.projectId] ?? project.projectId}: {warningText(warning)}
+                              </Badge>
+                            )))}
                           </div>
                         </th>
                         <td className="numeric">{formatHours(contract.actualSeconds)}</td>

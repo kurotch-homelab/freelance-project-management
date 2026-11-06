@@ -248,6 +248,23 @@ describe("createApp: ユースケース", () => {
       expect(nov.warnings).toEqual([{ kind: "belowMinForecast", seconds: (140 - 18) * HOUR }]);
     });
 
+    it("案件の名前を返す(画面で案件ごとの警告に名前を出すため)", async () => {
+      const d = await app.dashboard();
+      expect(d.projectNames).toMatchObject({ X: "案件 X" });
+    });
+
+    it("案件に結びついていない solidtime の稼働を返す(先月の初めから今日まで。請求に入らないので知らせる)", async () => {
+      f.solidtime.listTimeEntries.mockResolvedValueOnce([
+        stEntry("a", "st-x", "2026-11-10", HOUR),
+        stEntry("b", "st-unknown", "2026-11-10", 2 * HOUR),
+        stEntry("c", "st-unknown", "2026-10-01", HOUR),
+      ]);
+      await app.syncSolidtime();
+      const d = await app.dashboard();
+      expect(d.unlinked).toEqual([{ solidtimeProjectId: "st-unknown", seconds: 3 * HOUR }]);
+      expect(d.unlinked).toEqual(await repo.listUnlinkedSolidtimeProjects({ from: "2026-10-01", to: "2026-11-15" }));
+    });
+
     it("同期の状態も返す", async () => {
       const d = await app.dashboard();
       expect(d.sync.solidtime.lastSuccessAt).toBe(NOW.toISOString());

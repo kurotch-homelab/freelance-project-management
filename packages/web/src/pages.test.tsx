@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ApiClient } from "./api-client.ts";
+import type { ApiClient, Dashboard } from "./api-client.ts";
 import { DashboardPage } from "./pages/DashboardPage.tsx";
 import { InvoiceGuidePage } from "./pages/InvoiceGuidePage.tsx";
 import { TestProviders } from "./test-providers.tsx";
@@ -20,14 +20,16 @@ const outlook = {
   landingSeconds: 18 * HOUR,
   assumesRenewal: false,
   estimate: { subtotal: 90_000, tax: 9_000, total: 99_000 },
-  warnings: [{ kind: "belowMinForecast", seconds: 122 * HOUR }],
+  warnings: [{ kind: "belowMinForecast" as const, seconds: 122 * HOUR }],
   projects: [
     { projectId: "X", actualSeconds: 8 * HOUR, forecastSeconds: 10 * HOUR, landingSeconds: 18 * HOUR, warnings: [] },
   ],
 };
 
-const dashboard = {
+const dashboard: Dashboard = {
   asOf: "2026-11-15",
+  projectNames: { X: "案件 X" },
+  unlinked: [] as { solidtimeProjectId: string | null; seconds: number }[],
   months: [
     { month: "2026-11", contracts: [outlook] },
     {
@@ -39,7 +41,7 @@ const dashboard = {
           forecastSeconds: 37.25 * HOUR,
           landingSeconds: 37.25 * HOUR,
           assumesRenewal: true,
-          warnings: [{ kind: "aboveMaxForecast", seconds: 15 * HOUR }],
+          warnings: [{ kind: "aboveMaxForecast" as const, seconds: 15 * HOUR }],
         },
       ],
     },
@@ -139,6 +141,150 @@ describe("DashboardPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("見込みを読み込めませんでした");
     await userEvent.click(screen.getByRole("button", { name: "再読み込み" }));
     expect(await screen.findByRole("region", { name: "2026年11月" })).toBeInTheDocument();
+  });
+});
+
+describe("DashboardPage: レビューを受けて足した振る舞い", () => {
+  it("案件に結びついていない solidtime の稼働を、請求に入らないことと一緒に知らせる", async () => {
+    const api = fakeApi({
+      dashboard: vi.fn(async () => ({
+        ...dashboard,
+        unlinked: [
+          { solidtimeProjectId: "st-z", seconds: 10 * HOUR },
+          { solidtimeProjectId: null, seconds: 1.5 * HOUR },
+        ],
+      })),
+    });
+    renderPage(<DashboardPage api={api} />);
+    expect(await screen.findByText("案件に結びついていない solidtime の稼働があります(請求に入りません)")).toBeInTheDocument();
+    expect(screen.getByText("st-z: 10 時間")).toBeInTheDocument();
+    expect(screen.getByText("プロジェクトなし: 1.5 時間")).toBeInTheDocument();
+  });
+
+  it("結びついていない稼働がなければ、その知らせは出さない", async () => {
+    renderPage(<DashboardPage api={fakeApi()} />);
+    await screen.findByRole("region", { name: "2026年11月" });
+    expect(screen.queryByText(/案件に結びついていない/)).not.toBeInTheDocument();
+  });
+
+  it("案件ごとの目安時間の警告も、案件の名前つきで出す", async () => {
+    const api = fakeApi({
+      dashboard: vi.fn(async () => ({
+        ...dashboard,
+        months: [
+          {
+            month: "2026-11",
+            contracts: [
+              {
+                ...outlook,
+                warnings: [],
+                projects: [{ ...outlook.projects[0]!, warnings: [{ kind: "aboveMaxActual" as const, seconds: HOUR }] }],
+              },
+            ],
+          },
+        ],
+      })),
+    });
+    renderPage(<DashboardPage api={api} />);
+    expect(await screen.findByText("案件 X: 上限を 1 時間 超過")).toBeInTheDocument();
+  });
+
+  it("0.01 時間に満たない差の警告は「0.01 時間未満」と出す(0 時間とは出さない)", async () => {
+    const api = fakeApi({
+      dashboard: vi.fn(async () => ({
+        ...dashboard,
+        months: [{ month: "2026-11", contracts: [{ ...outlook, warnings: [{ kind: "aboveMaxActual" as const, seconds: 30 }] }] }],
+      })),
+    });
+    renderPage(<DashboardPage api={api} />);
+    expect(await screen.findByText("上限を 0.01 時間未満 超過")).toBeInTheDocument();
+  });
+
+  it("最後の失敗が最終成功より新しければ「未更新」と出す。成功のほうが新しければ出さない", async () => {
+    const api = fakeApi({
+      dashboard: vi.fn(async () => ({
+        ...dashboard,
+        sync: {
+          solidtime: {
+            lastSuccessAt: "2026-11-15T03:00:00Z",
+            lastFailure: { at: "2026-11-14T03:00:00Z", error: "Solidtime request failed (HTTP 500)" },
+          },
+          calendar: {
+            lastSuccessAt: "2026-11-14T02:00:00Z",
+            lastFailure: { at: "2026-11-15T02:00:00Z", error: "Google API request failed (HTTP 403)" },
+          },
+        },
+      })),
+    });
+    renderPage(<DashboardPage api={api} />);
+    expect(await screen.findByText("カレンダー未更新(前回取り込んだ内容で見込みを出しています)")).toBeInTheDocument();
+    expect(screen.queryByText(/solidtime 未更新/)).not.toBeInTheDocument();
+  });
+
+  it("同期のあと、読み直した内容に表示が変わる", async () => {
+    const api = fakeApi({
+      dashboard: vi
+        .fn()
+        .mockResolvedValueOnce(dashboard)
+        .mockResolvedValue({
+          ...dashboard,
+          months: [{ month: "2026-11", contracts: [{ ...outlook, landingSeconds: 20 * HOUR }] }],
+        }),
+    });
+    renderPage(<DashboardPage api={api} />);
+    await userEvent.click(await screen.findByRole("button", { name: "solidtime を同期" }));
+    await screen.findByRole("status");
+    const nov = screen.getByRole("region", { name: "2026年11月" });
+    expect(await within(nov).findByText("20 時間")).toBeInTheDocument();
+  });
+});
+
+describe("InvoiceGuidePage: レビューを受けて足した振る舞い", () => {
+  it("取引先を続けて切り替えたとき、あとから届いた古い応答で表示を上書きしない", async () => {
+    let releaseA: () => void = () => {};
+    const guideFor = (subject: string) => ({
+      clientName: subject,
+      subject,
+      invoiceDate: "2026-11-30",
+      dueDate: "2026-12-31",
+      lines: [],
+      note: null,
+      subtotal: 0,
+      tax: 0,
+      total: 0,
+    });
+    const invoiceGuide = vi.fn(({ clientId }: { clientId: string }) =>
+      clientId === "client-a"
+        ? new Promise((resolve) => (releaseA = () => resolve(guideFor("A の件名"))))
+        : Promise.resolve(guideFor("B の件名")),
+    );
+    renderPage(<InvoiceGuidePage api={fakeApi({ invoiceGuide } as Partial<ApiClient>)} defaultMonth="2026-11" />);
+    const select = await screen.findByLabelText("取引先");
+    await userEvent.selectOptions(select, "client-a");
+    await userEvent.selectOptions(select, "client-b");
+    expect(await screen.findByText("B の件名")).toBeInTheDocument();
+    releaseA();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("A の件名")).not.toBeInTheDocument();
+    expect(screen.getByText("B の件名")).toBeInTheDocument();
+  });
+
+  it("金額はカンマなしの数字でコピーする", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText");
+    renderPage(<InvoiceGuidePage api={fakeApi()} defaultMonth="2026-11" />);
+    await user.selectOptions(await screen.findByLabelText("取引先"), "client-a");
+    await user.click(await screen.findByRole("button", { name: "案件 X 2026年11月分 の金額をコピー" }));
+    expect(writeText).toHaveBeenLastCalledWith("186250");
+  });
+
+  it("コピーに失敗したらエラーを出す", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValueOnce(new Error("denied"));
+    renderPage(<InvoiceGuidePage api={fakeApi()} defaultMonth="2026-11" />);
+    await user.selectOptions(await screen.findByLabelText("取引先"), "client-a");
+    await user.click(await screen.findByRole("button", { name: "件名をコピー" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("コピーできませんでした");
   });
 });
 

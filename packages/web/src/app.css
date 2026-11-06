@@ -35,6 +35,7 @@ body { margin: 0; }
 .month-section { min-width: 0; }
 .table-frame { min-width: 0; border: 1px solid var(--f-border); border-radius: 8px; background: var(--f-surface); }
 .table-frame .f-table-scroll { border-radius: inherit; }
+.app-shell .table-frame .f-table-scroll:focus-visible { outline-offset: -2px; }
 .table-frame table { font-size: 14px; }
 .table-frame caption { text-align: left; padding: 16px 20px; font-size: 20px; font-weight: var(--f-weight-semibold); }
 .table-frame tbody th { background: transparent; color: var(--f-text); border-top: 0; font-weight: var(--f-weight-medium); }
