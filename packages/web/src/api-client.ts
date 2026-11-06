@@ -1,9 +1,17 @@
 import type { createApp } from "@fpm/app";
-import type { InvoiceGuide, InvoiceGuideInput } from "@fpm/domain";
+import type { ClientRecord, ProjectRecord } from "@fpm/db";
+import type { Contract, InvoiceGuide } from "@fpm/domain";
 
 export type Dashboard = Awaited<ReturnType<ReturnType<typeof createApp>["dashboard"]>>;
 export type SyncSource = keyof Dashboard["sync"];
-export type Client = Pick<InvoiceGuideInput["client"], "id" | "name">;
+export type Client = ClientRecord;
+export type Project = ProjectRecord;
+export type { Contract } from "@fpm/domain";
+type RatePushResult = Awaited<ReturnType<ReturnType<typeof createApp>["pushRates"]>>;
+export type SaveContractResult = {
+  readonly ok: true;
+  readonly pushRates: ({ readonly ok: true } & RatePushResult) | { readonly ok: false; readonly error: string };
+};
 export type SyncResult =
   | { readonly kind: "ok" }
   | { readonly kind: "busy" }
@@ -12,6 +20,11 @@ export type SyncResult =
 export interface ApiClient {
   dashboard(): Promise<Dashboard>;
   listClients(): Promise<readonly Client[]>;
+  listProjects(clientId?: string): Promise<readonly Project[]>;
+  listContracts(clientId?: string): Promise<readonly Contract[]>;
+  saveClient(client: Client): Promise<void>;
+  saveProject(project: Project): Promise<void>;
+  saveContract(contract: Contract): Promise<SaveContractResult>;
   invoiceGuide(query: { clientId: string; month: string }): Promise<InvoiceGuide | null>;
   sync(source: SyncSource): Promise<SyncResult>;
 }
@@ -36,16 +49,34 @@ async function responseError(response: Response): Promise<string> {
 }
 
 export function createApiClient({ fetch: fetcher = globalThis.fetch }: { fetch?: typeof fetch } = {}): ApiClient {
-  async function request<T>(url: string): Promise<T> {
-    const response = await fetcher(url, { method: "GET", credentials: "same-origin" });
+  async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+    const response = await fetcher(url, { method: "GET", ...options, credentials: "same-origin" });
     if (response.status === 401) throw new UnauthorizedError();
     if (!response.ok) throw new Error(await responseError(response));
     return response.json() as Promise<T>;
   }
 
+  function list<T>(resource: string, clientId?: string): Promise<readonly T[]> {
+    const query = clientId === undefined ? "" : `?${new URLSearchParams({ clientId })}`;
+    return request(`/api/${resource}${query}`);
+  }
+
+  function save<T>(resource: string, record: { readonly id: string }): Promise<T> {
+    return request(`/api/${resource}/${encodeURIComponent(record.id)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(record),
+    });
+  }
+
   return {
     dashboard: () => request<Dashboard>("/api/dashboard"),
     listClients: () => request<readonly Client[]>("/api/clients"),
+    listProjects: (clientId) => list<Project>("projects", clientId),
+    listContracts: (clientId) => list<Contract>("contracts", clientId),
+    async saveClient(client) { await save<{ ok: true }>("clients", client); },
+    async saveProject(project) { await save<{ ok: true }>("projects", project); },
+    saveContract: (contract) => save<SaveContractResult>("contracts", contract),
     async invoiceGuide(query) {
       const params = new URLSearchParams(query);
       const body = await request<{ guide: InvoiceGuide | null }>(`/api/invoice-guide?${params}`);
