@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: fpm
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fpm
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

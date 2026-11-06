@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fpm-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  # 省略時は既定の StorageClass。必要なら利用環境の名前を指定する。
+  # storageClassName: your-storage-class

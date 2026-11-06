@@ -1,0 +1,22 @@
+# Send only build inputs. Environment files and credentials never enter the context.
+**
+!package.json
+!package-lock.json
+!tsconfig*.json
+!packages/
+!packages/**
+**/.env*
+**/node_modules
+**/dist
+**/.git
+**/.serena
+**/.aws
+**/.codex
+**/.agents
+**/secrets
+**/coverage
+**/*.tsbuildinfo
+**/*.sqlite*
+**/*.db
+**/*.pem
+**/*.key

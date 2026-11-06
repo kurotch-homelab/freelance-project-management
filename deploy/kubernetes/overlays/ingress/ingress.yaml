@@ -1,0 +1,22 @@
+# 利用中の Ingress controller、DNS、TLS 証明書に合わせて変更する例。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fpm
+spec:
+  ingressClassName: example-ingress-class
+  tls:
+    - hosts:
+        - fpm.example.com
+      secretName: fpm-tls
+  rules:
+    - host: fpm.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fpm
+                port:
+                  name: http

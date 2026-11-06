@@ -4,3 +4,7 @@
 node_modules
 dist
 *.tsbuildinfo
+# Local deployment credentials, overlays, and SQLite backups.
+/secrets/
+/backups/
+/deploy/kubernetes/overlays/local/

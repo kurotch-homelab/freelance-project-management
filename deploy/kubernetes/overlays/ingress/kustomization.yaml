@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # PostgreSQL にする場合は ../postgres に替える。
+  - ../sqlite
+  - ingress.yaml

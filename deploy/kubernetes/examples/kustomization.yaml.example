@@ -1,0 +1,45 @@
+# overlays/local/kustomization.yaml にコピーして使う。local/ は gitignore 済み。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../sqlite
+  # PostgreSQL なら ../postgres、SQLite + Ingress なら ../ingress に替える。
+images:
+  - name: fpm
+    newName: registry.example.com/your-project/fpm
+    newTag: replace-with-release-tag
+configMapGenerator:
+  - name: fpm-config
+    behavior: merge
+    envs:
+      - config.env
+  - name: fpm-google-wif
+    behavior: replace
+    files:
+      - credentials.json=google-wif.json
+  # audience の置換は利用側の overlay で行う。親 overlay の値も反映される。
+  - name: fpm-token-audiences
+    literals:
+      - oidc=https://idp.example.com/fpm-client-assertion
+      - google=https://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/example-pool/providers/example-provider
+replacements:
+  - source:
+      kind: ConfigMap
+      name: fpm-token-audiences
+      fieldPath: data.oidc
+    targets:
+      - select:
+          kind: Deployment
+          name: fpm
+        fieldPaths:
+          - spec.template.spec.volumes.[name=oidc-token].projected.sources.0.serviceAccountToken.audience
+  - source:
+      kind: ConfigMap
+      name: fpm-token-audiences
+      fieldPath: data.google
+    targets:
+      - select:
+          kind: Deployment
+          name: fpm
+        fieldPaths:
+          - spec.template.spec.volumes.[name=google-token].projected.sources.0.serviceAccountToken.audience
