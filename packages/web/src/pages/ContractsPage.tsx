@@ -25,7 +25,10 @@ function ContractForm({ initial, clients, projects, title, saving, onCancel, onS
   const [maxHours, setMaxHours] = useState<number | null>(initial.hoursRange?.maxHours ?? null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const projectsErrorId = useId();
-  const availableProjects = projects.filter((project) => project.clientId === value.clientId && (!project.archived || initial.projectIds.includes(project.id)));
+  const retainedMismatch = (project: Project) => initial.clientId === value.clientId &&
+    initial.projectIds.includes(project.id) && project.clientId !== value.clientId;
+  const availableProjects = projects.filter((project) => retainedMismatch(project) ||
+    (project.clientId === value.clientId && (!project.archived || initial.projectIds.includes(project.id))));
 
   function submit(form: HTMLFormElement) {
     const next: FieldErrors = {};
@@ -44,7 +47,8 @@ function ContractForm({ initial, clients, projects, title, saving, onCancel, onS
       next.projectIds = "選んだ取引先の案件を選択してください";
     }
     // 入力対象外の目安時間を消さず、API が拒否する関連付けの解除を防ぐ。
-    if (Object.keys(initial.projectHoursRanges ?? {}).some((id) => !value.projectIds.includes(id))) {
+    if (Object.keys(initial.projectHoursRanges ?? {}).some((id) => !value.projectIds.includes(id) &&
+      !projects.some((project) => project.id === id && retainedMismatch(project)))) {
       next.projectIds = "案件ごとの目安時間が登録されている案件は、この画面では外せません。元の取引先と案件を選択してください";
     }
     if (badInput("minHours") || !validHours(minHours)) next.minHours = "月の下限は 0 以上の時間を入力してください";
@@ -56,6 +60,9 @@ function ContractForm({ initial, clients, projects, title, saving, onCancel, onS
     const { hoursRange: previousHoursRange, ...preserved } = value;
     onSave({
       ...preserved,
+      ...(value.projectHoursRanges === undefined ? {} : {
+        projectHoursRanges: Object.fromEntries(Object.entries(value.projectHoursRanges).filter(([id]) => value.projectIds.includes(id))),
+      }),
       ...(minHours === null && maxHours === null ? {} : { hoursRange: {
         ...(minHours === null ? {} : { minHours }),
         ...(maxHours === null ? {} : { maxHours }),
@@ -84,7 +91,7 @@ function ContractForm({ initial, clients, projects, title, saving, onCancel, onS
       </p>
       {value.clientId && availableProjects.length === 0 && <p className="muted">この取引先の案件はありません。solidtime で案件を追加して同期してください。</p>}
       {value.clientId && availableProjects.map((project) => <div className="project-choice" key={project.id}>
-        <Checkbox label={project.archived ? `${project.name}(アーカイブ)` : project.name} name="projectIds" value={project.id} checked={value.projectIds.includes(project.id)}
+        <Checkbox label={retainedMismatch(project) ? `${project.name}(取引先が変わりました)` : project.archived ? `${project.name}(アーカイブ)` : project.name} name="projectIds" value={project.id} checked={value.projectIds.includes(project.id)}
           aria-invalid={!!errors.projectIds} aria-describedby={projectsErrorId}
           onCheckedChange={(checked) => setValue({ ...value, projectIds: checked
             ? [...value.projectIds, project.id] : value.projectIds.filter((id) => id !== project.id) })} />

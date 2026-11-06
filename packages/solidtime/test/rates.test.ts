@@ -67,6 +67,22 @@ describe("listProjectsWithRates: 案件ごとの今の単価(円/時間)", () =>
     expect(a).toMatchObject({ id: "A", name: "案件 A", hourlyRate: 6_000 });
   });
 
+  it("project members の 2 ページ目の自分の単価を使う", async () => {
+    serve({ projects: [project("A", 500_000)], myRate: 800_000, orgRate: 900_000 });
+    const pages: number[] = [];
+    server.use(http.get(`${API}/projects/A/project-members`, ({ request }) => {
+      const page = Number(new URL(request.url).searchParams.get("page"));
+      pages.push(page);
+      return HttpResponse.json({
+        ...projectMembers,
+        data: [page === 1 ? projectMember("A", OTHER, 700_000) : projectMember("A", ME, 600_025)],
+        meta: { ...projectMembers.meta, current_page: page, last_page: 2, total: 2 },
+      });
+    }));
+    expect((await client().listProjectsWithRates())[0]!.hourlyRate).toBe(6_000.25);
+    expect(pages).toEqual([1, 2]);
+  });
+
   it("その案件に自分の単価がなければ、案件の単価", async () => {
     serve({
       projects: [project("A", 500_000)],

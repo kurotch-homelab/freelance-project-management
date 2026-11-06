@@ -229,4 +229,106 @@ describe("solidtime を正として取り込む", () => {
     const d = await app.dashboard();
     expect(d.projectsWithoutRate).toEqual([{ id: "st-norate", name: "案件 st-norate" }]);
   });
+  it("取引先変更のあった案件とその上書きだけを除外し、残りの案件を予測・請求する", async () => {
+    f.solidtime.listProjectsWithRates.mockResolvedValue([stProject("st-x"), stProject("st-old")]);
+    await app.syncSolidtime();
+    await repo.saveContract({ ...contract, projectHoursRanges: { "st-x": { minHours: 10 } } });
+    await repo.saveHoursRangeOverride({ contractId: "c1", projectId: "st-x", month: "2026-11", range: { minHours: 20 }, note: "合意" });
+    f.solidtime.listClients.mockResolvedValue([stClient("st-client-a", "A 社"), stClient("st-client-b", "B 社")]);
+    f.solidtime.listProjectsWithRates.mockResolvedValue([stProject("st-x", { clientId: "st-client-b" }), stProject("st-old")]);
+    await app.syncSolidtime();
+    const d = await app.dashboard();
+    expect(d.months[0]!.contracts[0]!.projects.map((p) => p.projectId)).toEqual(["st-old"]);
+    expect(d.months[0]!.contracts[0]!.forecastSeconds).toBeGreaterThan(0);
+    expect(d.workWithoutContract).toEqual([{ projectId: "st-x", name: "案件 st-x", seconds: 8 * HOUR }]);
+    expect((await app.invoiceGuide({ clientId: "st-client-a", month: "2026-11" }))?.lines.map((line) => line.item)).toEqual(["案件 st-old 2026年11月分"]);
+    // 全案件が食い違う契約と、そこに残る上書きも計算を止めない。
+    f.solidtime.listProjectsWithRates.mockResolvedValue([stProject("st-x", { clientId: null }), stProject("st-old", { clientId: "st-client-b" })]);
+    await app.syncSolidtime();
+    expect((await app.dashboard()).months[0]!.contracts).toEqual([]);
+    expect(await app.invoiceGuide({ clientId: "st-client-a", month: "2026-11" })).toBeNull();
+  });
+
+  it.each(["project", "contract"] as const)("%s 単位の見込みとガイドは同じ端数処理で一致する(更新・複数単価・複数取引先・契約なし)", async (lineGrouping) => {
+    f.solidtime.listClients.mockResolvedValue([stClient("st-client-a", "A 社"), stClient("st-client-b", "B 社")]);
+    f.solidtime.listProjectsWithRates.mockResolvedValue([
+      stProject("st-x", { hourlyRate: 4850.25 }), stProject("st-y", { hourlyRate: 4850.25 }),
+      stProject("st-old", { hourlyRate: 5000.25, isArchived: true }), stProject("st-norate", { hourlyRate: null }),
+      stProject("st-b", { clientId: "st-client-b", hourlyRate: 100.25 }),
+    ]);
+    f.solidtime.listTimeEntries.mockResolvedValue([
+      stEntry("x1", "st-x", "2026-11-01", 20), stEntry("x2", "st-x", "2026-11-10", 20),
+      stEntry("x3", "st-x", "2026-11-15", 36040), stEntry("y", "st-y", "2026-11-10", 36060),
+      stEntry("old", "st-old", "2026-11-10", 37), stEntry("nr", "st-norate", "2026-11-10", 3 * HOUR),
+      stEntry("b", "st-b", "2026-11-10", 36060),
+    ]);
+    await app.syncSolidtime();
+    await repo.saveContract({ ...contract, end: "2026-11-05", projectIds: ["st-x", "st-y"] });
+    await repo.saveContract({ ...contract, id: "c2", start: "2026-11-06", end: "2026-11-15", projectIds: ["st-x", "st-y", "st-old", "st-norate"] });
+    for (const id of ["st-client-a", "st-client-b"]) {
+      await app.updateClientBilling(id, { paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" }, subjectTemplate: "{M}月分", lineGrouping });
+    }
+    const month = (await app.dashboard()).months[0]!;
+    expect(month.contracts.every((c) => c.forecastSeconds === 0)).toBe(true);
+    // A: 案件ごとは 48,599 + 48,551 + 50。契約ごとは 0 + 97,150 + 50。
+    expect(month.clients).toEqual([
+      { clientId: "st-client-a", clientName: "A 社", estimate: { subtotal: 97200, tax: 9720, total: 106920 } },
+      { clientId: "st-client-b", clientName: "B 社", estimate: { subtotal: 1003, tax: 100, total: 1103 } },
+    ]);
+    for (const client of month.clients) {
+      const guide = await app.invoiceGuide({ clientId: client.clientId, month: month.month });
+      expect(guide).toMatchObject(client.estimate);
+    }
+    expect(month.contracts.map((c) => c.estimate)).toEqual([{ subtotal: 0 }, { subtotal: lineGrouping === "project" ? 97152 : 97200 }]);
+  });
+
+  it("予測期間が短くても先月初日まで同期し、アーカイブ案件の警告は今日までの実績に限る", async () => {
+    app = createApp({ repo, ...f, clock: { now: () => NOW }, config: { timeZone: "Asia/Tokyo", forecastWeeks: 1, forecastMonths: 1, driveRootFolderId: "root" } });
+    f.solidtime.listProjectsWithRates.mockResolvedValue([
+      stProject("recent", { isArchived: true, hourlyRate: null, clientId: null }),
+      stProject("idle", { isArchived: true, hourlyRate: null, clientId: null }),
+    ]);
+    f.solidtime.listTimeEntries.mockResolvedValue([
+      stEntry("recent", "recent", "2026-10-01", HOUR),
+      stEntry("old", "idle", "2026-09-30", HOUR), stEntry("future", "idle", "2026-11-16", HOUR),
+    ]);
+    await expect(app.syncSolidtime()).resolves.toMatchObject({ ok: true });
+    expect(f.solidtime.listTimeEntries).toHaveBeenCalledWith({ from: "2026-10-01", to: "2026-11-15" });
+    const d = await app.dashboard();
+    expect(d.projectsWithoutRate).toEqual([{ id: "recent", name: "案件 recent" }]);
+    expect(d.projectsWithoutClient).toEqual(d.projectsWithoutRate);
+    expect(d.workWithoutContract).toEqual([]);
+  });
+
+  it.each(["project", "contract"] as const)("%s 単位で更新前提の着地時間を実績にしたガイドと見込みが一致する", async (lineGrouping) => {
+    await app.syncSolidtime();
+    await repo.saveContract({ ...contract, end: "2026-11-15", renewalOutlook: "likely" });
+    await app.updateClientBilling("st-client-a", { paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" }, subjectTemplate: "{M}月分", lineGrouping });
+    const month = (await app.dashboard()).months[0]!;
+    expect(month.contracts[0]!.forecastSeconds).toBeGreaterThan(0);
+    expect(month.contracts[0]!.assumesRenewal).toBe(true);
+    await repo.saveContract({ ...contract, end: "2026-11-30" });
+    await repo.replaceTimeEntries({ from: "2026-11-01", to: "2026-11-30" }, month.contracts[0]!.projects.map((project) => ({
+      id: project.projectId, solidtimeProjectId: project.projectId, date: "2026-11-30", seconds: project.landingSeconds, billable: true,
+    })));
+    expect(await app.invoiceGuide({ clientId: "st-client-a", month: "2026-11" })).toMatchObject(month.clients[0]!.estimate);
+  });
+
+  it("契約なし稼働は日ごとに実契約で判定し、アーカイブ案件も含める", async () => {
+    f.solidtime.listTimeEntries.mockResolvedValue([
+      stEntry("before", "st-old", "2026-11-09", HOUR), stEntry("start", "st-old", "2026-11-10", 2 * HOUR),
+      stEntry("end", "st-old", "2026-11-12", 3 * HOUR), stEntry("after", "st-old", "2026-11-13", 4 * HOUR),
+      { ...stEntry("nonbillable", "st-old", "2026-11-14", 7 * HOUR), billable: false },
+    ]);
+    await app.syncSolidtime();
+    await repo.saveContract({ ...contract, start: "2026-11-10", end: "2026-11-12", projectIds: ["st-old"], renewalOutlook: "likely" });
+    await app.updateClientBilling("st-client-a", { paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" }, subjectTemplate: "{M}月分", lineGrouping: "contract" });
+    expect((await app.dashboard()).workWithoutContract).toEqual([{ projectId: "st-old", name: "案件 st-old", seconds: 5 * HOUR }]);
+    const guide = await app.invoiceGuide({ clientId: "st-client-a", month: "2026-11" });
+    expect(guide?.lines.map((line) => [line.item, line.quantity])).toEqual([
+      ["案件 st-old 2026年11月分", 5], ["業務委託契約 2026年11月分", 5],
+    ]);
+    expect(guide?.warnings).toEqual([{ kind: "missingContract", projectId: "st-old", projectName: "案件 st-old", seconds: 5 * HOUR }]);
+  });
+
 });

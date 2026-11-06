@@ -136,6 +136,13 @@ describe("ProjectsPage: 案件(solidtime から取り込む。見るだけ)", ()
     expect(within(table).getByRole("row", { name: /案件 Y/ })).toHaveTextContent("未設定");
   });
 
+  it("1/100 円の単価は小数第二位まで出す(丸めない)", async () => {
+    const api = fakeApi({ listProjects: vi.fn(async () => [{ ...projectX, hourlyRate: 5_000.25 }]) } as Partial<ApiClient>);
+    renderPage(<ProjectsPage api={api} />);
+    const table = await screen.findByRole("table", { name: "案件" });
+    expect(within(table).getByRole("row", { name: /案件 X/ })).toHaveTextContent("¥5,000.25/時間");
+  });
+
   it("追加・編集のボタンはなく、solidtime で変えることを案内する", async () => {
     renderPage(<ProjectsPage api={fakeApi()} />);
     await screen.findByRole("table", { name: "案件" });

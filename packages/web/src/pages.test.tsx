@@ -19,7 +19,7 @@ const outlook = {
   forecastSeconds: 10 * HOUR,
   landingSeconds: 18 * HOUR,
   assumesRenewal: false,
-  estimate: { subtotal: 90_000, tax: 9_000, total: 99_000 },
+  estimate: { subtotal: 90_000 },
   warnings: [{ kind: "belowMinForecast" as const, seconds: 122 * HOUR }],
   projects: [
     { projectId: "X", actualSeconds: 8 * HOUR, forecastSeconds: 10 * HOUR, landingSeconds: 18 * HOUR, warnings: [] },
@@ -31,11 +31,14 @@ const dashboard: Dashboard = {
   projectNames: { X: "案件 X" },
   projectsWithoutClient: [],
   projectsWithoutRate: [],
+  contractProjectMismatches: [],
+  workWithoutContract: [],
   unlinked: [] as { solidtimeProjectId: string | null; seconds: number }[],
   months: [
-    { month: "2026-11", contracts: [outlook] },
+    { month: "2026-11", contracts: [outlook], clients: [{ clientId: "client-a", clientName: "A 社", estimate: { subtotal: 90_000, tax: 9_000, total: 99_000 } }] },
     {
       month: "2026-12",
+      clients: [],
       contracts: [
         {
           ...outlook,
@@ -87,7 +90,10 @@ describe("DashboardPage", () => {
     expect(row).toHaveTextContent("8 時間");
     expect(row).toHaveTextContent("10 時間");
     expect(row).toHaveTextContent("18 時間");
-    expect(row).toHaveTextContent("¥99,000");
+    expect(row).toHaveTextContent("¥90,000");
+    expect(within(nov).getByRole("columnheader", { name: "請求見込み(税抜)" })).toBeInTheDocument();
+    const clients = within(nov).getByRole("table", { name: "取引先別の請求見込み(税込)" });
+    expect(within(clients).getByRole("row", { name: /A 社/ })).toHaveTextContent("¥99,000");
   });
 
   it("小数の時間は小数第二位まで出す", async () => {
@@ -177,6 +183,7 @@ describe("DashboardPage: レビューを受けて足した振る舞い", () => {
         months: [
           {
             month: "2026-11",
+            clients: [],
             contracts: [
               {
                 ...outlook,
@@ -196,7 +203,7 @@ describe("DashboardPage: レビューを受けて足した振る舞い", () => {
     const api = fakeApi({
       dashboard: vi.fn(async () => ({
         ...dashboard,
-        months: [{ month: "2026-11", contracts: [{ ...outlook, warnings: [{ kind: "aboveMaxActual" as const, seconds: 30 }] }] }],
+        months: [{ month: "2026-11", clients: [], contracts: [{ ...outlook, warnings: [{ kind: "aboveMaxActual" as const, seconds: 30 }] }] }],
       })),
     });
     renderPage(<DashboardPage api={api} />);
@@ -231,7 +238,7 @@ describe("DashboardPage: レビューを受けて足した振る舞い", () => {
         .mockResolvedValueOnce(dashboard)
         .mockResolvedValue({
           ...dashboard,
-          months: [{ month: "2026-11", contracts: [{ ...outlook, landingSeconds: 20 * HOUR }] }],
+          months: [{ month: "2026-11", clients: [], contracts: [{ ...outlook, landingSeconds: 20 * HOUR }] }],
         }),
     });
     renderPage(<DashboardPage api={api} />);
@@ -357,4 +364,31 @@ it("請求明細が全件単価なしでも、除外した時間と警告を表�
   await user.selectOptions(await screen.findByLabelText("取引先"), "client-a");
   expect(await screen.findByText("案件 Y は単価が未設定のため、3 時間 を請求に入れていません")).toBeInTheDocument();
   expect(screen.getByText("請求に含められる明細はありません")).toBeInTheDocument();
+});
+
+it("取引先変更と契約なし稼働をダッシュボードに表示する", async () => {
+  renderPage(<DashboardPage api={fakeApi({ dashboard: vi.fn(async () => ({
+    ...dashboard,
+    contractProjectMismatches: [{ contractId: "c1", contractName: "業務委託契約", projectId: "X", projectName: "案件 X", projectClientId: null }],
+    workWithoutContract: [{ projectId: "X", name: "案件 X", seconds: 3600 }],
+  })) })} />);
+  expect(await screen.findByText(/案件 X\(取引先が変わりました\)/)).toBeInTheDocument();
+  expect(screen.getByText("契約に入っていない稼働があります")).toBeInTheDocument();
+  expect(screen.getByText("案件 X: 1 時間")).toBeInTheDocument();
+});
+
+it("請求書ガイドの小数単価と契約なし稼働の警告を表示する", async () => {
+  const service = fakeApi();
+  const original = await service.invoiceGuide({ clientId: "client-a", month: "2026-11" });
+  vi.mocked(service.invoiceGuide).mockResolvedValue({
+    ...original!,
+    lines: [{ item: "案件 X 2026年11月分", quantity: 1, unit: "時間", unitPrice: 5000.25, amount: 5000 }],
+    warnings: [{ kind: "missingContract", projectId: "X", projectName: "案件 X", seconds: 3600 }],
+    subtotal: 5000, tax: 500, total: 5500,
+  });
+  renderPage(<InvoiceGuidePage api={service} defaultMonth="2026-11" />);
+  await userEvent.selectOptions(await screen.findByLabelText("取引先"), "client-a");
+  expect(await screen.findByText("¥5,000.25")).toBeInTheDocument();
+  expect(screen.getByText("案件 X: 契約に入っていない稼働 1 時間")).toBeInTheDocument();
+  expect(screen.queryByText(/単価が未設定/)).not.toBeInTheDocument();
 });

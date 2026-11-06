@@ -1,9 +1,14 @@
 import type { ClientBilling, Repository, SyncSource } from "@fpm/db";
 import {
   contractCoverage,
+  contractsForCurrentProjects,
   forecastDays,
   invoiceGuide as buildInvoiceGuide,
   monthOutlook,
+  validateClientBilling,
+  groupInvoiceWork,
+  summarizeInvoice,
+  type InvoiceWork,
 } from "@fpm/domain";
 import {
   absenceSecondsByDay,
@@ -84,9 +89,9 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
     syncSolidtime() {
       return sync("solidtime", async () => {
         const asOf = today();
-        const monthStart = `${asOf.slice(0, 7)}-01`;
+        const previousMonthStart = `${addDays(`${asOf.slice(0, 7)}-01`, -1).slice(0, 7)}-01`;
         const start = historyStart(asOf);
-        const period = { from: start < monthStart ? start : monthStart, to: asOf };
+        const period = { from: start < previousMonthStart ? start : previousMonthStart, to: asOf };
         const clients = await solidtime.listClients();
         const projects = await solidtime.listProjectsWithRates();
         const entries = await solidtime.listTimeEntries(period);
@@ -95,7 +100,7 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
           projects: projects.map(({ id, clientId, name, isArchived, hourlyRate }) => ({
             id, clientId, name, archived: isArchived, hourlyRate,
           })),
-        }, period, entries.map((entry) => ({
+        }, period, entries.filter((entry) => entry.date >= period.from && entry.date <= period.to).map((entry) => ({
           id: entry.id,
           solidtimeProjectId: entry.projectId,
           date: entry.date,
@@ -125,6 +130,7 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
     },
 
     async updateClientBilling(clientId: string, billing: ClientBilling) {
+      validateClientBilling(billing);
       await repo.updateClientBilling(clientId, billing);
     },
 
@@ -133,7 +139,7 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
       const periods = forecastPeriods(asOf, config.forecastMonths);
       const until = periods.at(-1)!.to;
       const previousMonthStart = `${addDays(`${asOf.slice(0, 7)}-01`, -1).slice(0, 7)}-01`;
-      const [projects, contracts, history, absenceSeconds, solidtimeStatus, calendarStatus, unlinked] = await Promise.all([
+      const [projects, savedContracts, history, absenceSeconds, solidtimeStatus, calendarStatus, unlinked, clients, recentWork] = await Promise.all([
         repo.listProjects({ includeArchived: true }),
         repo.listContracts(),
         repo.listDailyWork({ from: historyStart(asOf), to: asOf }),
@@ -141,7 +147,28 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
         repo.getSyncStatus("solidtime"),
         repo.getSyncStatus("calendar"),
         repo.listUnlinkedSolidtimeProjects({ from: previousMonthStart, to: asOf }),
+        repo.listClients(),
+        repo.listDailyWork({ from: previousMonthStart, to: asOf }),
       ]);
+      const projectById = new Map(projects.map((project) => [project.id, project]));
+      const contracts = contractsForCurrentProjects(savedContracts, projects);
+      const contractProjectMismatches = savedContracts.flatMap((contract) => contract.projectIds.flatMap((id) => {
+        const project = projectById.get(id);
+        return project && project.clientId !== contract.clientId ? [{
+          contractId: contract.id, contractName: contract.name,
+          projectId: id, projectName: project.name, projectClientId: project.clientId,
+        }] : [];
+      }));
+      const recentProjectIds = new Set(recentWork.filter((work) => work.seconds > 0).map((work) => work.projectId));
+      const warningProjects = projects.filter((project) => !project.archived || recentProjectIds.has(project.id));
+      const uncovered = new Map<string, number>();
+      for (const work of recentWork) {
+        if (work.date.slice(0, 7) !== asOf.slice(0, 7) || work.seconds === 0) continue;
+        const coverage = contractCoverage(contracts, work.projectId, work.date);
+        if (coverage === null || coverage.assumesRenewal) {
+          uncovered.set(work.projectId, (uncovered.get(work.projectId) ?? 0) + work.seconds);
+        }
+      }
       const forecast = forecastDays({
         asOf,
         until,
@@ -160,20 +187,55 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
           repo.listDailyWork({ from, to }),
           repo.listHoursRangeOverrides({ month }),
         ]);
+        // 実績は当日まで、予測は翌日から。実績には更新前提の契約を当てない。
+        const work: InvoiceWork[] = [
+          ...actual.filter((row) => row.date <= asOf).map((row) => {
+            const coverage = contractCoverage(contracts, row.projectId, row.date);
+            return {
+              ...row, contractId: coverage !== null && !coverage.assumesRenewal ? coverage.contract.id : null,
+              hourlyRate: projectById.get(row.projectId)?.hourlyRate ?? null,
+            };
+          }),
+          ...forecast.filter((row) => row.date.slice(0, 7) === month).map((row) => ({
+            ...row, contractId: contractCoverage(contracts, row.projectId, row.date)?.contract.id ?? null,
+            hourlyRate: projectById.get(row.projectId)?.hourlyRate ?? null,
+          })),
+        ];
+        const outlook = monthOutlook({
+          month, asOf, contracts, projects,
+          actual: actual.filter((row) => {
+            const coverage = contractCoverage(contracts, row.projectId, row.date);
+            return coverage !== null && !coverage.assumesRenewal;
+          }),
+          forecast,
+          hoursRangeOverrides: hoursRangeOverrides.filter((override) => contracts.some((contract) =>
+            contract.id === override.contractId && (override.projectId === null || contract.projectIds.includes(override.projectId)),
+          )),
+        });
         return {
           month,
-          contracts: monthOutlook({ month, asOf, contracts, projects, actual: actual.filter((work) => {
-            const coverage = contractCoverage(contracts, work.projectId, work.date);
-            return coverage !== null && !coverage.assumesRenewal;
-          }), forecast, hoursRangeOverrides }),
+          contracts: outlook.map((contract) => {
+            const clientId = contracts.find((saved) => saved.id === contract.contractId)!.clientId;
+            const grouping = clients.find((client) => client.id === clientId)!.lineGrouping;
+            const { subtotal } = summarizeInvoice(groupInvoiceWork(work.filter((row) => row.contractId === contract.contractId), grouping));
+            return { ...contract, estimate: { subtotal } };
+          }),
+          clients: clients.flatMap((client) => {
+            const groups = groupInvoiceWork(work.filter((row) => projectById.get(row.projectId)?.clientId === client.id), client.lineGrouping);
+            if (groups.length === 0) return [];
+            const { subtotal, tax, total } = summarizeInvoice(groups);
+            return [{ clientId: client.id, clientName: client.name, estimate: { subtotal, tax, total } }];
+          }),
         };
       }));
       return {
         asOf,
         projectNames: Object.fromEntries(projects.map((project) => [project.id, project.name])),
         unlinked,
-        projectsWithoutClient: projects.filter((p) => !p.archived && p.clientId === null).map(({ id, name }) => ({ id, name })),
-        projectsWithoutRate: projects.filter((p) => !p.archived && p.hourlyRate === null).map(({ id, name }) => ({ id, name })),
+        contractProjectMismatches,
+        workWithoutContract: projects.flatMap(({ id, name }) => uncovered.has(id) ? [{ projectId: id, name, seconds: uncovered.get(id)! }] : []),
+        projectsWithoutClient: warningProjects.filter((p) => p.clientId === null).map(({ id, name }) => ({ id, name })),
+        projectsWithoutRate: warningProjects.filter((p) => p.hourlyRate === null).map(({ id, name }) => ({ id, name })),
         months,
         sync: { solidtime: solidtimeStatus, calendar: calendarStatus },
       };

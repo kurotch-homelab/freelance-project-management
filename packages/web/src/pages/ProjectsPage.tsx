@@ -1,6 +1,6 @@
 import { Checkbox, EmptyState } from "@kurotch-homelab/forma-react";
 import { useCallback, useState } from "react";
-import { formatYen } from "../format.ts";
+import { formatRate } from "../format.ts";
 import { useApiQuery } from "../use-api-query.ts";
 import { MasterTable, QueryFeedback, type MasterPageProps } from "./master-page.tsx";
 
@@ -19,7 +19,7 @@ export function ProjectsPage({ api }: MasterPageProps) {
       <tbody>{query.data.projects.map((project) => <tr key={project.id}>
         <th scope="row">{project.name}</th>
         <td>{query.data!.clients.find((client) => client.id === project.clientId)?.name ?? project.clientId ?? "未設定"}</td>
-        <td className="numeric">{project.hourlyRate === null ? "未設定" : `${formatYen(project.hourlyRate)}/時間`}</td>
+        <td className="numeric">{project.hourlyRate === null ? "未設定" : `${formatRate(project.hourlyRate)}/時間`}</td>
         <td>{project.archived ? "アーカイブ" : "進行中"}</td>
       </tr>)}</tbody>
     </MasterTable>}

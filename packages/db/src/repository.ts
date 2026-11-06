@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { effectiveHoursRange, validateContracts, validatePaymentTerms, type Contract, type HoursRange } from "@fpm/domain";
+import { effectiveHoursRange, validateContracts, validateClientBilling, type Contract, type HoursRange } from "@fpm/domain";
 import type { Selectable } from "kysely";
 import type { Database } from "./database.ts";
 import type { ClientsTable, ProjectsTable, StoredInteger } from "./schema.ts";
@@ -165,7 +165,7 @@ export function createRepository(db: Database): Repository {
       });
     },
     async updateClientBilling(id, billing) {
-      validatePaymentTerms(billing.paymentTerms);
+      validateClientBilling(billing);
       const result = await db.updateTable("clients").set({
         closing_day: String(billing.paymentTerms.closingDay),
         payment_month_offset: billing.paymentTerms.paymentMonthOffset,
@@ -207,7 +207,11 @@ export function createRepository(db: Database): Repository {
         validateContracts([...saved.filter((c) => c.id !== contract.id), contract]);
         const projects = await tx.selectFrom("projects").select(["id", "client_id"])
           .where("id", "in", contract.projectIds).execute();
-        if (projects.length !== contract.projectIds.length || projects.some((p) => p.client_id !== contract.clientId)) {
+        const previous = saved.find((c) => c.id === contract.id);
+        if (projects.length !== contract.projectIds.length || projects.some((p) =>
+          p.client_id !== contract.clientId &&
+          !(previous?.clientId === contract.clientId && previous.projectIds.includes(p.id)),
+        )) {
           throw new RangeError("Contract projects must exist and belong to the contract's client");
         }
         const row = {

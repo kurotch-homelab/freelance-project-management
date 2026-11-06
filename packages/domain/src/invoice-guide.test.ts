@@ -103,8 +103,8 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
         projects: [X([{ date: "2026-11-10", seconds: 20 }]), Y([{ date: "2026-11-10", seconds: 20 }])],
       });
       expect(guide?.lines.map((l) => [l.item, l.quantity, l.amount])).toEqual([
-        ["業務委託契約 2026年11月分(11/1〜11/30)", 0, 0],
-        ["業務委託契約 2026年11月分(11/1〜11/30)", 0, 0],
+        ["業務委託契約 2026年11月分(案件 X・11/1〜11/30)", 0, 0],
+        ["業務委託契約 2026年11月分(案件 Y・11/1〜11/30)", 0, 0],
       ]);
       expect(guide?.subtotal).toBe(0);
     });
@@ -268,13 +268,14 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
       expect(guide).toMatchObject({ subtotal: 50, tax: 5, total: 55 });
     });
 
-    it("更新見込みが「高い」だけで、契約がない日の稼働は請求できない(契約の登録漏れ)", () => {
-      expect(() =>
-        guideFor({
-          contracts: [contract({ end: "2026-11-15", renewalOutlook: "likely" })],
-          projects: [X([{ date: "2026-11-20", seconds: HOUR }])],
-        }),
-      ).toThrow(RangeError);
+    it("更新前提の契約は実契約として扱わず、案件名の行と警告を出す", () => {
+      const guide = guideFor({
+        client: client({ lineGrouping: "contract" }),
+        contracts: [contract({ end: "2026-11-15", renewalOutlook: "likely" })],
+        projects: [X([{ date: "2026-11-20", seconds: HOUR }])],
+      });
+      expect(guide?.lines).toEqual([{ item: "案件 X 2026年11月分", quantity: 1, unit: "時間", unitPrice: 5000, amount: 5000 }]);
+      expect(guide?.warnings).toEqual([{ kind: "missingContract", projectId: "X", projectName: "案件 X", seconds: HOUR }]);
     });
   });
 
@@ -319,10 +320,10 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
     expect(guide?.subject).toBe("2026/03 開発支援(3月分)");
   });
 
-  it("稼働日を含む契約がなければ受け付けない", () => {
-    expect(() =>
-      guideFor({ contracts: [contract({ start: "2026-11-15" })], projects: [X([{ date: "2026-11-10", seconds: HOUR }])] }),
-    ).toThrow(RangeError);
+  it("案件ごとの明細には稼働日を含む契約が要らない", () => {
+    const guide = guideFor({ contracts: [contract({ start: "2026-11-15" })], projects: [X([{ date: "2026-11-10", seconds: HOUR }])] });
+    expect(guide?.lines).toEqual([{ item: "案件 X 2026年11月分", quantity: 1, unit: "時間", unitPrice: 5000, amount: 5000 }]);
+    expect(guide?.warnings).toEqual([]);
   });
 
   it("ほかの取引先の契約が入っていたら受け付けない", () => {

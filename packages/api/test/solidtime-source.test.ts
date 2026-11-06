@@ -65,6 +65,16 @@ describe("createApi: solidtime を正とする形", () => {
     expect(useCases.updateClientBilling).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { ...billing, paymentTerms: { closingDay: 31, paymentMonthOffset: 0, paymentDay: 1 } },
+    { ...billing, paymentTerms: { closingDay: "end", paymentMonthOffset: 0, paymentDay: 30 } },
+    { ...billing, subjectTemplate: " \t\n " },
+  ])("請求できなくなる設定を API で拒否して更新しない: %o", async (invalidBilling) => {
+    const res = await api.request("/api/clients/st-client-a/billing", json(invalidBilling));
+    expect(res.status).toBe(400);
+    expect(useCases.updateClientBilling).not.toHaveBeenCalled();
+  });
+
   it("ない取引先の請求の設定は 404", async () => {
     vi.mocked(useCases.updateClientBilling).mockRejectedValueOnce(new RangeError("Client not found: nope"));
     expect((await api.request("/api/clients/nope/billing", json(billing))).status).toBe(404);

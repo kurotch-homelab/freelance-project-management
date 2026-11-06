@@ -1,8 +1,11 @@
-export { billableHours, lineAmount, consumptionTax, summarizeInvoice } from "./billing.ts";
+export { billableHours, lineAmount, consumptionTax, summarizeInvoice, groupInvoiceWork } from "./billing.ts";
+export type { InvoiceWork, InvoiceWorkGroup } from "./billing.ts";
+export { validateClientBilling } from "./client-billing.ts";
+export type { ClientBilling } from "./client-billing.ts";
 export type { InvoiceEntry, InvoiceLine, InvoiceSummary } from "./billing.ts";
 export { invoiceDates, validatePaymentTerms } from "./payment-terms.ts";
 export type { PaymentTerms, InvoiceDates } from "./payment-terms.ts";
-export { contractCoverage, validateContracts } from "./contracts.ts";
+export { contractCoverage, validateContracts, contractsForCurrentProjects } from "./contracts.ts";
 export type { Contract, ContractCoverage } from "./contracts.ts";
 export { invoiceGuide } from "./invoice-guide.ts";
 export type { InvoiceGuideInput, InvoiceGuideProject, InvoiceGuideLine, InvoiceGuide } from "./invoice-guide.ts";

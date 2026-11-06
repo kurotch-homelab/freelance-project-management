@@ -18,6 +18,25 @@ export interface ContractCoverage {
   readonly assumesRenewal: boolean;
 }
 
+/** 同期で取引先が変わった案件を計算から外す。保存済みの契約自体は変更しない。 */
+export function contractsForCurrentProjects(
+  contracts: readonly Contract[],
+  projects: readonly { readonly id: string; readonly clientId: string | null }[],
+): Contract[] {
+  const clients = new Map(projects.map((project) => [project.id, project.clientId]));
+  return contracts.flatMap((contract) => {
+    const projectIds = contract.projectIds.filter((id) => clients.get(id) === contract.clientId);
+    if (projectIds.length === 0) return [];
+    return [{
+      ...contract,
+      projectIds,
+      ...(contract.projectHoursRanges === undefined ? {} : {
+        projectHoursRanges: Object.fromEntries(Object.entries(contract.projectHoursRanges).filter(([id]) => projectIds.includes(id))),
+      }),
+    }];
+  });
+}
+
 /** 案件の当日の契約を返す。更新前提で延長するのは、その案件の最後の契約だけ。 */
 export function contractCoverage(
   contracts: readonly Contract[],

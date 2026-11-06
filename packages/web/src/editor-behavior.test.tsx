@@ -53,3 +53,48 @@ it("既存契約のアーカイブ案件を括弧付きで表示し、編集後�
   await user.click(screen.getByRole("button", { name: "保存" }));
   expect(service.saveContract).toHaveBeenCalledWith({ ...contract, end: "2026-12-31" });
 });
+
+it.each([false, true])("取引先が変わった案件を印つきで保持・解除できる(解除: %s)", async (remove) => {
+  const user = userEvent.setup();
+  const contract: Contract = {
+    id: "c", clientId: "a", name: "契約", start: "2026-01-01", end: null,
+    projectIds: ["moved", "stay"], projectHoursRanges: { moved: { maxHours: 80 }, stay: { minHours: 10 } }, renewalOutlook: "undecided",
+  };
+  const service = {
+    ...api(),
+    listProjects: vi.fn(async () => [
+      { id: "moved", clientId: "b", name: "移動案件", archived: true, hourlyRate: 5000, driveFolderId: null },
+      { id: "stay", clientId: "a", name: "継続案件", archived: false, hourlyRate: 5000, driveFolderId: null },
+      { id: "other", clientId: "b", name: "別案件", archived: false, hourlyRate: 5000, driveFolderId: null },
+    ]),
+    listContracts: vi.fn(async () => [contract]), saveContract: vi.fn(async () => undefined),
+  };
+  render(<TestProviders><ContractsPage api={service} /></TestProviders>);
+  await user.click(await screen.findByRole("button", { name: "契約 を編集" }));
+  const moved = screen.getByRole("checkbox", { name: "移動案件(取引先が変わりました)" });
+  expect(moved).toBeChecked();
+  expect(screen.queryByRole("checkbox", { name: "別案件" })).not.toBeInTheDocument();
+  if (remove) await user.click(moved);
+  await user.type(screen.getByLabelText("終了日"), "2026-12-31");
+  await user.click(screen.getByRole("button", { name: "保存" }));
+  expect(service.saveContract).toHaveBeenCalledWith({
+    ...contract, end: "2026-12-31",
+    ...(remove ? { projectIds: ["stay"], projectHoursRanges: { stay: { minHours: 10 } } } : {}),
+  });
+});
+
+it.each(["payment", "subject"])("請求設定が不正なら送信せず入力を保持する: %s", async (field) => {
+  const user = userEvent.setup();
+  const service = api();
+  render(<TestProviders><ClientsPage api={service} /></TestProviders>);
+  await user.click(await screen.findByRole("button", { name: "A 社 の請求の設定を変える" }));
+  if (field === "payment") await user.selectOptions(screen.getByLabelText("支払月"), "0");
+  else {
+    await user.clear(screen.getByLabelText("件名のひな形"));
+    await user.type(screen.getByLabelText("件名のひな形"), "   ");
+  }
+  await user.click(screen.getByRole("button", { name: "保存" }));
+  expect(service.saveClientBilling).not.toHaveBeenCalled();
+  expect(screen.getByRole("form")).toBeInTheDocument();
+  expect(screen.getByText(field === "payment" ? "当月払いの支払日は締め日以降を選択してください" : "件名のひな形を入力してください")).toBeInTheDocument();
+});

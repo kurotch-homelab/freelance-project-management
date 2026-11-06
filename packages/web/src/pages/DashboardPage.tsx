@@ -121,6 +121,15 @@ export function DashboardPage({ api }: { api: ApiClient }) {
           {query.data.projectsWithoutRate.map((project) => <p key={project.id}>{project.name} は単価が未設定のため、請求見込み額に含めていません。solidtime で単価を設定してください。</p>)}
         </Alert>}
 
+        {query.data.contractProjectMismatches.length > 0 && <Alert tone="warning" title="契約と案件の取引先が食い違っています">
+          {query.data.contractProjectMismatches.map((mismatch) => <p key={`${mismatch.contractId}:${mismatch.projectId}`}>
+            {mismatch.contractName}: {mismatch.projectName}(取引先が変わりました)。この契約の見込みから外しています。契約の対象案件を確認してください。
+          </p>)}
+        </Alert>}
+        {query.data.workWithoutContract.length > 0 && <Alert tone="warning" title="契約に入っていない稼働があります">
+          {query.data.workWithoutContract.map((project) => <p key={project.projectId}>{project.name}: {formatHours(project.seconds)}</p>)}
+        </Alert>}
+
         {query.data.unlinked.length > 0 && (
           <Alert tone="warning" title="案件に結びついていない solidtime の稼働があります(請求に入りません)">
             {query.data.unlinked.map(({ solidtimeProjectId, seconds }) => (
@@ -132,12 +141,23 @@ export function DashboardPage({ api }: { api: ApiClient }) {
         )}
 
         {query.data.months.length === 0 && <EmptyState title="表示する見込みはありません" description="同期して最新のデータを取得してください。" />}
-        {query.data.months.map(({ month, contracts }) => (
+        {query.data.months.map(({ month, contracts, clients }) => (
           <section key={month} aria-label={formatMonth(month)} className="month-section">
             <div className="section-heading">
               <h2>{formatMonth(month)}</h2>
               <span className="muted">{contracts.length} 件の契約</span>
             </div>
+            {clients.length > 0 && <div className="f-data-table table-frame">
+              <div className="f-table-scroll" tabIndex={0} role="group" aria-label={`${formatMonth(month)} の取引先別請求見込み（横スクロール）`}>
+                <table className="outlook-table">
+                  <caption>取引先別の請求見込み(税込)</caption>
+                  <thead><tr><th scope="col">取引先</th><th scope="col" className="numeric">請求見込み(税込)</th></tr></thead>
+                  <tbody>{clients.map((client) => <tr key={client.clientId}>
+                    <th scope="row">{client.clientName}</th><td className="numeric emphasis">{formatYen(client.estimate.total)}</td>
+                  </tr>)}</tbody>
+                </table>
+              </div>
+            </div>}
             {contracts.length === 0 ? <EmptyState title="この月の契約はありません" /> : (
               <div className="f-data-table table-frame">
                 <div className="f-table-scroll" tabIndex={0} role="group" aria-label={`${formatMonth(month)} の契約一覧（横スクロール）`}>
@@ -146,7 +166,7 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                     <thead><tr>
                       <th scope="col">契約</th><th scope="col" className="numeric">実績</th>
                       <th scope="col" className="numeric">予測</th><th scope="col" className="numeric">着地見込み</th>
-                      <th scope="col" className="numeric">請求見込み(税込)</th>
+                      <th scope="col" className="numeric">請求見込み(税抜)</th>
                     </tr></thead>
                     <tbody>{contracts.map((contract) => (
                       <tr key={contract.contractId}>
@@ -165,7 +185,7 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                         <td className="numeric">{formatHours(contract.actualSeconds)}</td>
                         <td className="numeric">{formatHours(contract.forecastSeconds)}</td>
                         <td className="numeric emphasis">{formatHours(contract.landingSeconds)}</td>
-                        <td className="numeric emphasis">{formatYen(contract.estimate.total)}</td>
+                        <td className="numeric emphasis">{formatYen(contract.estimate.subtotal)}</td>
                       </tr>
                     ))}</tbody>
                   </table>

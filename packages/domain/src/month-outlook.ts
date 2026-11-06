@@ -44,7 +44,7 @@ export interface MonthOutlook {
   readonly forecastSeconds: number;
   readonly landingSeconds: number;
   readonly assumesRenewal: boolean;
-  readonly estimate: Pick<InvoiceSummary, "subtotal" | "tax" | "total">;
+  readonly estimate: Pick<InvoiceSummary, "subtotal">;
   readonly warnings: readonly HoursRangeWarning[];
   readonly projects: readonly MonthOutlookProject[];
 }
@@ -183,7 +183,7 @@ export function monthOutlook(input: MonthOutlookInput): readonly MonthOutlook[] 
     });
     const actualSeconds = projects.reduce((sum, project) => addSeconds(sum, project.actualSeconds), 0);
     const forecastSeconds = projects.reduce((sum, project) => addSeconds(sum, project.forecastSeconds), 0);
-    const { subtotal, tax, total } = summarizeInvoice(projects.flatMap((project) => {
+    const { subtotal } = summarizeInvoice(projects.flatMap((project) => {
       const hourlyRate = input.projects.find((p) => p.id === project.projectId)?.hourlyRate ?? null;
       return hourlyRate === null ? [] : [{ seconds: project.landingSeconds, hourlyRate }];
     }));
@@ -194,7 +194,7 @@ export function monthOutlook(input: MonthOutlookInput): readonly MonthOutlook[] 
       forecastSeconds,
       landingSeconds: addSeconds(actualSeconds, forecastSeconds),
       assumesRenewal: group.assumesRenewal,
-      estimate: { subtotal, tax, total },
+      estimate: { subtotal },
       warnings: hoursRangeWarnings({ actualSeconds, forecastSeconds, range: group.range }),
       projects,
     };

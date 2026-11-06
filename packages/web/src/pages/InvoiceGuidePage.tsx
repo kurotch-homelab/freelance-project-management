@@ -3,7 +3,7 @@ import type { InvoiceGuide } from "@fpm/domain";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../api-client.ts";
 import { errorMessage } from "../errors.ts";
-import { formatHours, formatYen } from "../format.ts";
+import { formatHours, formatRate, formatYen } from "../format.ts";
 import { useApiQuery } from "../use-api-query.ts";
 
 const monthPattern = /^[0-9]{4}-(0[1-9]|1[0-2])$/;
@@ -43,8 +43,10 @@ function GuideContent({ guide }: { guide: InvoiceGuide }) {
     <section className="guide-content page-stack" aria-label={`${guide.clientName} の請求書ガイド`}>
       <div className="section-heading"><h2>{guide.clientName} の請求内容</h2></div>
       {notice && <Alert key={notice.id} tone={notice.error ? "danger" : "success"}>{notice.text}</Alert>}
-      {guide.warnings.map((warning) => <Alert key={warning.projectId} tone="warning">
-        {warning.projectName} は単価が未設定のため、{formatHours(warning.seconds)} を請求に入れていません
+      {guide.warnings.map((warning) => <Alert key={`${warning.kind}:${warning.projectId}`} tone="warning">
+        {warning.kind === "missingRate"
+          ? `${warning.projectName} は単価が未設定のため、${formatHours(warning.seconds)} を請求に入れていません`
+          : `${warning.projectName}: 契約に入っていない稼働 ${formatHours(warning.seconds)}`}
       </Alert>)}
       {guide.lines.length === 0 && <EmptyState title="請求に含められる明細はありません" />}
       <dl className="guide-fields">
@@ -70,7 +72,7 @@ function GuideContent({ guide }: { guide: InvoiceGuide }) {
                 <th scope="row"><div className="copy-value"><span>{line.item}</span>{copyButton(`${line.item} の品目`, line.item)}</div></th>
                 <td className="numeric"><div className="copy-value"><span>{line.quantity}</span>{copyButton(`${line.item} の数量`, String(line.quantity))}</div></td>
                 <td><div className="copy-value"><span>{line.unit}</span>{copyButton(`${line.item} の単位`, line.unit)}</div></td>
-                <td className="numeric"><div className="copy-value"><span>{formatYen(line.unitPrice)}</span>{copyButton(`${line.item} の単価`, String(line.unitPrice))}</div></td>
+                <td className="numeric"><div className="copy-value"><span>{formatRate(line.unitPrice)}</span>{copyButton(`${line.item} の単価`, String(line.unitPrice))}</div></td>
                 <td className="numeric"><div className="copy-value"><span>{formatYen(line.amount)}</span>{copyButton(`${line.item} の金額`, String(line.amount))}</div></td>
               </tr>
             ))}</tbody>

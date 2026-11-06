@@ -59,7 +59,7 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
       forecastSeconds: 60 * HOUR,
       landingSeconds: 140 * HOUR,
       assumesRenewal: false,
-      estimate: { subtotal: 700_000, tax: 70_000, total: 770_000 },
+      estimate: { subtotal: 700_000 },
       warnings: [],
       projects: [
         { projectId: "X", actualSeconds: 60 * HOUR, forecastSeconds: 40 * HOUR, landingSeconds: 100 * HOUR, warnings: [] },
@@ -248,7 +248,7 @@ it("単価なしの実績と予測も時間と目安時間の警告には含め�
   });
   expect(c).toMatchObject({
     actualSeconds: 3 * HOUR, forecastSeconds: 3 * HOUR, landingSeconds: 6 * HOUR,
-    estimate: { subtotal: 5000, tax: 500, total: 5500 },
+    estimate: { subtotal: 5000 },
     warnings: [{ kind: "belowMinForecast", seconds: 134 * HOUR }],
   });
 });

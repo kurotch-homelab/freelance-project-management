@@ -16,6 +16,38 @@ export interface InvoiceSummary {
   readonly total: number;
 }
 
+export interface InvoiceWork {
+  readonly projectId: string;
+  readonly contractId: string | null;
+  readonly seconds: number;
+  readonly hourlyRate: number | null;
+}
+
+export interface InvoiceWorkGroup extends InvoiceEntry {
+  readonly contractId: string | null;
+  readonly projects: ReadonlyMap<string, number>;
+}
+
+/** 実績と着地見込みで共通の明細集約。契約のない稼働は案件ごとの行にする。 */
+export function groupInvoiceWork(work: readonly InvoiceWork[], grouping: "project" | "contract"): InvoiceWorkGroup[] {
+  const groups = new Map<string, { contractId: string | null; hourlyRate: number; seconds: number; projects: Map<string, number> }>();
+  for (const row of work) {
+    if (!Number.isFinite(row.seconds) || row.seconds < 0 || row.seconds > Number.MAX_SAFE_INTEGER) {
+      throw new RangeError("seconds must be a non-negative safe number");
+    }
+    if (row.seconds === 0 || row.hourlyRate === null) continue;
+    const contractId = grouping === "contract" ? row.contractId : null;
+    const key = JSON.stringify([contractId === null ? "project" : "contract", contractId ?? row.projectId, row.hourlyRate]);
+    const group = groups.get(key) ?? { contractId, hourlyRate: row.hourlyRate, seconds: 0, projects: new Map<string, number>() };
+    group.seconds += row.seconds;
+    if (group.seconds > Number.MAX_SAFE_INTEGER) throw new RangeError("total seconds must not exceed the safe integer range");
+    group.projects.set(row.projectId, (group.projects.get(row.projectId) ?? 0) + row.seconds);
+    groups.set(key, group);
+  }
+  // 予測の小数秒も明細行に合算してから切り捨てる。
+  return Array.from(groups.values(), (group) => ({ ...group, seconds: Math.floor(group.seconds) }));
+}
+
 function assertNonNegativeSafeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new RangeError(`${name} must be a non-negative safe integer`);

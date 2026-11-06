@@ -108,7 +108,7 @@ describe("createApp: ユースケース", () => {
   });
 
   describe("syncSolidtime: solidtime の打刻を取り込む", () => {
-    it("予測に使う直近 N 週と今月の初めのうち早いほうから、今日までを取り込む", async () => {
+    it("予測に使う直近 N 週と先月の初めのうち早いほうから、今日までを取り込む", async () => {
       await app.syncSolidtime();
       expect(f.solidtime.listTimeEntries).toHaveBeenCalledWith(
         expect.objectContaining({ from: "2026-09-20", to: "2026-11-15" }),

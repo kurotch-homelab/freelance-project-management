@@ -323,4 +323,30 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
       await expect(repo.getSyncStatus("drive")).resolves.toEqual({ lastSuccessAt: null, lastFailure: null });
     });
   });
+  it.each([
+    { ...clientA, subjectTemplate: " \t " },
+    { ...clientA, paymentTerms: { closingDay: "end" as const, paymentMonthOffset: 0, paymentDay: 30 } },
+  ])("請求設定を拒否したら前の設定が残る: %o", async (billing) => {
+    await repo.syncSolidtimeCatalog({ clients: [clientA], projects: [] });
+    const before = await repo.getClient("client-a");
+    await expect(repo.updateClientBilling("client-a", billing)).rejects.toThrow(RangeError);
+    expect(await repo.getClient("client-a")).toEqual(before);
+  });
+
+  it("取引先が変わった案件は既存契約に残せるが、外した後の再追加や別契約には入れられない", async () => {
+    const clients = [clientA, { ...clientA, id: "client-b", name: "B 社" }];
+    await repo.syncSolidtimeCatalog({ clients, projects: [projectX, projectY] });
+    await repo.saveContract(contract1);
+    await repo.saveHoursRangeOverride({ contractId: "c1", projectId: "Y", month: "2026-11", range: { maxHours: 20 }, note: "合意" });
+    await repo.syncSolidtimeCatalog({ clients, projects: [projectX, { ...projectY, clientId: "client-b" }] });
+    const updated = { ...contract1, end: "2026-11-30" };
+    await repo.saveContract(updated);
+    expect(await repo.listContracts()).toEqual([updated]);
+    await expect(repo.saveContract({ ...updated, clientId: "client-b" })).rejects.toThrow(RangeError);
+    await expect(repo.saveContract({ ...updated, id: "new", start: "2027-01-01", end: null })).rejects.toThrow(RangeError);
+    await repo.saveContract({ ...updated, projectIds: ["X"], projectHoursRanges: {} });
+    expect(await repo.listHoursRangeOverrides()).toEqual([]);
+    await expect(repo.saveContract(updated)).rejects.toThrow(RangeError);
+  });
+
 });

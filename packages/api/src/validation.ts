@@ -1,5 +1,5 @@
 import type { ClientBilling, HoursRangeOverrideRecord } from "@fpm/db";
-import { validatePaymentTerms, type Contract, type HoursRange } from "@fpm/domain";
+import { validateClientBilling, type Contract, type HoursRange } from "@fpm/domain";
 
 function invalid(field: string): never {
   throw new RangeError(`Invalid ${field}`);
@@ -70,7 +70,7 @@ export function parseClientBilling(value: unknown): ClientBilling {
     subjectTemplate: string(client.subjectTemplate, "subjectTemplate"),
     lineGrouping: oneOf(client.lineGrouping, ["project", "contract"], "lineGrouping"),
   };
-  validatePaymentTerms(billing.paymentTerms);
+  validateClientBilling(billing);
   return billing;
 }
 
