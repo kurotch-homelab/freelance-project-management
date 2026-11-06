@@ -46,7 +46,7 @@ export interface InvoiceGuide extends InvoiceDates {
 
 interface LineGroup {
   readonly name: string;
-  readonly contractId: string;
+  readonly contractId: string | null;
   readonly hourlyRate: number;
   readonly firstProjectIndex: number;
   readonly projects: Map<string, { readonly name: string; seconds: number }>;
@@ -80,12 +80,6 @@ function contractPeriods(contracts: readonly Contract[], monthStart: string, mon
 function shortDate(day: number): string {
   const date = formatDate(day);
   return `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
-}
-
-function periodsOverlap(left: readonly Period[], right: readonly Period[]): boolean {
-  return left.some((period) => right.some((other) =>
-    period.start <= other.end && other.start <= period.end,
-  ));
 }
 
 function formatWorkTime(seconds: number): string {
@@ -146,12 +140,12 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
       }
       const { contract } = coverage;
       const hourlyRate = project.hourlyRate;
-      const key = client.lineGrouping === "project" ? JSON.stringify([project.id, contract.id]) : contract.id;
+      const key = client.lineGrouping === "project" ? project.id : contract.id;
       const rates = groups.get(key) ?? new Map<number, LineGroup>();
       groups.set(key, rates);
       const group = rates.get(hourlyRate) ?? {
         name: client.lineGrouping === "project" ? project.name : contract.name,
-        contractId: contract.id,
+        contractId: client.lineGrouping === "project" ? null : contract.id,
         hourlyRate,
         firstProjectIndex: projectIndex,
         projects: new Map<string, { readonly name: string; seconds: number }>(),
@@ -178,7 +172,7 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
     Array.from(rates.values(), (group) => {
       // 実績の日付ではなく、対象の契約期間を表示する。
       const matchingContracts = monthlyContracts.filter((contract) =>
-        contract.id === group.contractId &&
+        (group.contractId === null || contract.id === group.contractId) &&
         Array.from(group.projects.keys()).some((projectId) =>
           contract.projectIds.includes(projectId),
         ),
@@ -189,13 +183,9 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
     a.periods[0]!.start - b.periods[0]!.start || a.firstProjectIndex - b.firstProjectIndex,
   );
   const entries = lines.map((line) => {
-    const sameNameLines = lines.filter((other) => other !== line && other.name === line.name);
-    const showProjects = client.lineGrouping === "contract" && sameNameLines.some((other) =>
-      periodsOverlap(line.periods, other.periods),
-    );
-    const showPeriods = Array.from(line.projects.keys()).some((projectId) =>
-      monthlyContracts.filter((contract) => contract.projectIds.includes(projectId)).length > 1,
-    ) || sameNameLines.some((other) => !periodsOverlap(line.periods, other.periods));
+    const showProjects = line.contractId !== null && groups.get(line.contractId)!.size > 1;
+    const showPeriods = line.contractId !== null &&
+      monthlyContracts.filter((contract) => contract.name === line.name).length > 1;
     const labels: string[] = [];
     if (showProjects) {
       labels.push(Array.from(line.projects.values(), (project) => project.name).join("、"));

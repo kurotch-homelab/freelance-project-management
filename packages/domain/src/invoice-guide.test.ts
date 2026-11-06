@@ -103,8 +103,8 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
         projects: [X([{ date: "2026-11-10", seconds: 20 }]), Y([{ date: "2026-11-10", seconds: 20 }])],
       });
       expect(guide?.lines.map((l) => [l.item, l.quantity, l.amount])).toEqual([
-        ["業務委託契約 2026年11月分(案件 X)", 0, 0],
-        ["業務委託契約 2026年11月分(案件 Y)", 0, 0],
+        ["業務委託契約 2026年11月分(11/1〜11/30)", 0, 0],
+        ["業務委託契約 2026年11月分(11/1〜11/30)", 0, 0],
       ]);
       expect(guide?.subtotal).toBe(0);
     });
@@ -119,6 +119,47 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
         ["業務委託契約 2026年11月分(11/1〜11/15)", 20],
         ["業務委託契約 2026年11月分(11/16〜11/30)", 10],
       ]);
+      expect(guide?.note).toBe([
+        "業務委託契約 2026年11月分(11/1〜11/15) の内訳: 案件 X 20時間",
+        "業務委託契約 2026年11月分(11/16〜11/30) の内訳: 案件 X 10時間",
+      ].join("\n"));
+    });
+
+    it("名前の違う契約に更新したら、明細と備考には契約名だけを使う", () => {
+      const guide = guideFor({
+        client: client({ lineGrouping: "contract" }),
+        contracts: [
+          contract({ id: "c1", end: "2026-11-15" }),
+          contract({ id: "c2", name: "後期契約", start: "2026-11-16" }),
+        ],
+        projects: [
+          X([{ date: "2026-11-05", seconds: 20 * HOUR }, { date: "2026-11-20", seconds: 10 * HOUR }]),
+          Y([{ date: "2026-11-05", seconds: 5 * HOUR }, { date: "2026-11-20", seconds: 2 * HOUR }]),
+        ],
+      });
+      expect(guide?.lines.map((l) => [l.item, l.quantity])).toEqual([
+        ["業務委託契約 2026年11月分", 25],
+        ["後期契約 2026年11月分", 12],
+      ]);
+      expect(guide?.note).toBe([
+        "業務委託契約 2026年11月分 の内訳: 案件 X 20時間、案件 Y 5時間",
+        "後期契約 2026年11月分 の内訳: 案件 X 10時間、案件 Y 2時間",
+      ].join("\n"));
+    });
+
+    it.each([
+      ["2026-10-31", "業務委託契約 2026年11月分"],
+      ["2026-11-15", "業務委託契約 2026年11月分(11/16〜11/30)"],
+    ])("稼働のない同名契約も、対象月にある場合だけ期間の判定に含める(終了日 %s)", (end, item) => {
+      const guide = guideFor({
+        client: client({ lineGrouping: "contract" }),
+        contracts: [contract({ id: "c1", end }), contract({ id: "c2", start: "2026-11-16" })],
+        projects: [X([{ date: "2026-11-20", seconds: 10 * HOUR }])],
+      });
+      expect(guide?.lines).toEqual([
+        { item, quantity: 10, unit: "時間", unitPrice: 5_000, amount: 50_000 },
+      ]);
+      expect(guide?.note).toBe(`${item} の内訳: 案件 X 10時間`);
     });
 
     it("途中で契約が変わる X と、異なる単価の Y: どちらの行にも案件名と期間", () => {
@@ -139,6 +180,12 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
         ["業務委託契約 2026年11月分(案件 X・11/16〜11/30)", 5_000],
         ["業務委託契約 2026年11月分(案件 Y・11/16〜11/30)", 7_000],
       ]);
+      expect(guide?.note).toBe([
+        "業務委託契約 2026年11月分(案件 X・11/1〜11/15) の内訳: 案件 X 1時間",
+        "業務委託契約 2026年11月分(案件 Y・11/1〜11/15) の内訳: 案件 Y 1時間",
+        "業務委託契約 2026年11月分(案件 X・11/16〜11/30) の内訳: 案件 X 1時間",
+        "業務委託契約 2026年11月分(案件 Y・11/16〜11/30) の内訳: 案件 Y 1時間",
+      ].join("\n"));
     });
 
     it("今の単価が違う案件は、案件名を添えて単価ごとに行を分ける", () => {
@@ -160,7 +207,7 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
       contract({ id: "c2", start: "2026-11-16" }),
     ];
 
-    it("月の途中で契約を更新したら、期間を品目名に入れて行を分ける", () => {
+    it("案件ごと: 月の途中で契約を更新しても、期間を入れず 1 行にまとめる", () => {
       const guide = guideFor({
         contracts: renewed,
         projects: [
@@ -172,17 +219,17 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
         ],
       });
       expect(guide?.lines).toEqual([
-        { item: "案件 X 2026年11月分(11/1〜11/15)", quantity: 20, unit: "時間", unitPrice: 5_000, amount: 100_000 },
-        { item: "案件 X 2026年11月分(11/16〜11/30)", quantity: 10, unit: "時間", unitPrice: 5_000, amount: 50_000 },
+        { item: "案件 X 2026年11月分", quantity: 30, unit: "時間", unitPrice: 5_000, amount: 150_000 },
       ]);
+      expect(guide?.note).toBeNull();
     });
 
-    it("契約が変わった月に、変わったあとだけ稼働しても期間を出す", () => {
+    it("案件ごと: 契約が変わったあとだけ稼働しても期間を出さない", () => {
       const guide = guideFor({ contracts: renewed, projects: [X([{ date: "2026-11-20", seconds: 10 * HOUR }])] });
-      expect(guide?.lines.map((l) => l.item)).toEqual(["案件 X 2026年11月分(11/16〜11/30)"]);
+      expect(guide?.lines.map((l) => l.item)).toEqual(["案件 X 2026年11月分"]);
     });
 
-    it("月内に 3 契約があるときは、同じ今の単価で期間ごとに分ける", () => {
+    it("案件ごと: 月内に 3 契約があっても、今の単価で 1 行にまとめる", () => {
       const guide = guideFor({
         contracts: [
           contract({ id: "c1", end: "2026-11-10" }),
@@ -198,29 +245,27 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
         ],
       });
       expect(guide?.lines.map((l) => [l.item, l.quantity])).toEqual([
-        ["案件 X 2026年11月分(11/1〜11/10)", 1],
-        ["案件 X 2026年11月分(11/11〜11/20)", 1],
-        ["案件 X 2026年11月分(11/21〜11/30)", 1],
+        ["案件 X 2026年11月分", 3],
       ]);
     });
 
-    it("契約の境界日の稼働は、それぞれの期間に振り分け今の案件単価を使う", () => {
+    it("案件ごと: 契約の境界日の稼働も合算し、今の案件単価を使う", () => {
       const guide = guideFor({
         contracts: renewed,
         projects: [X([{ date: "2026-11-15", seconds: HOUR }, { date: "2026-11-16", seconds: HOUR }])],
       });
-      expect(guide?.lines.map((l) => l.amount)).toEqual([5_000, 5_000]);
+      expect(guide?.lines.map((l) => l.amount)).toEqual([10_000]);
     });
 
-    it("更新して単価が同じでも契約期間で行を分ける", () => {
+    it("案件ごと: 契約更新の前後を合算してから請求時間を切り捨てる(20 秒 + 20 秒 → 0.01h)", () => {
       const guide = guideFor({
-        contracts: [contract({ id: "c1", end: "2026-11-15" }), contract({ id: "c2", start: "2026-11-16" })],
-        projects: [X([{ date: "2026-11-05", seconds: 20 * HOUR }, { date: "2026-11-20", seconds: 10 * HOUR }])],
+        contracts: renewed,
+        projects: [X([{ date: "2026-11-05", seconds: 20 }, { date: "2026-11-20", seconds: 20 }])],
       });
       expect(guide?.lines).toEqual([
-        { item: "案件 X 2026年11月分(11/1〜11/15)", quantity: 20, unit: "時間", unitPrice: 5_000, amount: 100_000 },
-        { item: "案件 X 2026年11月分(11/16〜11/30)", quantity: 10, unit: "時間", unitPrice: 5_000, amount: 50_000 },
+        { item: "案件 X 2026年11月分", quantity: 0.01, unit: "時間", unitPrice: 5_000, amount: 50 },
       ]);
+      expect(guide).toMatchObject({ subtotal: 50, tax: 5, total: 55 });
     });
 
     it("更新見込みが「高い」だけで、契約がない日の稼働は請求できない(契約の登録漏れ)", () => {
