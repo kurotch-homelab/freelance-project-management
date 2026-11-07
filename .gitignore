@@ -8,3 +8,5 @@ dist
 /secrets/
 /backups/
 /deploy/kubernetes/overlays/local/
+# Local tool state
+.serena/
