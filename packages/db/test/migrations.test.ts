@@ -55,6 +55,28 @@ describe.each(backends)("マイグレーションのトランザクション (%s
     expect(await db.selectFrom("sync_records").selectAll().execute()).toHaveLength(1);
   });
 
+  it("002 から 003 は既存データを残し、打刻の単価は再同期まで null にする", async () => {
+    const migrator = new Migrator({ db, provider: migrationProvider });
+    expect((await migrator.migrateTo("002_solidtime_source")).error).toBeUndefined();
+    await sql`insert into clients (id, name, closing_day, payment_month_offset, payment_day, subject_template, line_grouping, archived)
+      values ('a', 'A', 'end', 1, 'end', 'template', 'project', 0)`.execute(db);
+    await sql`insert into projects (id, client_id, name, archived, hourly_rate) values ('x', 'a', 'X', 0, 5000)`.execute(db);
+    await sql`insert into time_entries (id, solidtime_project_id, date, seconds, billable, start_at)
+      values ('e', 'x', '2026-11-01', 3600, 1, '2026-11-01T00:00:00Z')`.execute(db);
+    await migrateToLatest(db);
+    await migrateToLatest(db);
+    expect(await db.selectFrom("time_entries").select(["id", "hourly_rate", "start_at"]).execute())
+      .toEqual([{ id: "e", hourly_rate: null, start_at: "2026-11-01T00:00:00Z" }]);
+    expect(await db.selectFrom("projects").select(["id", "hourly_rate"]).execute())
+      .toEqual([{ id: "x", hourly_rate: 5000 }]);
+    await db.updateTable("time_entries").set({ hourly_rate: 6000.25 }).execute();
+    expect((await db.selectFrom("time_entries").select("hourly_rate").executeTakeFirst())?.hourly_rate).toBe(6000.25);
+    await expect(db.updateTable("time_entries").set({ hourly_rate: -1 }).execute()).rejects.toThrow();
+    expect((await migrator.migrateDown()).error).toBeUndefined();
+    await migrateToLatest(db);
+    expect(await db.selectFrom("time_entries").select(["id", "hourly_rate"]).execute()).toEqual([{ id: "e", hourly_rate: null }]);
+  });
+
   it.each(["exception", "sql"] as const)("途中の %s エラーはその 1 件だけを戻し、修正後に再実行できる", async (failure) => {
     let shouldFail = true;
     const migrations: Record<string, Migration> = {

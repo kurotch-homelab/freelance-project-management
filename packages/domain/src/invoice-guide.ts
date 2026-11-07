@@ -1,7 +1,6 @@
-import { groupInvoiceWork, summarizeInvoice, type InvoiceWork } from "./billing.ts";
+import { groupInvoiceWork, summarizeInvoice, type RatedDailyWork, type InvoiceWork } from "./billing.ts";
 import { contractCoverage, validateContracts, type Contract } from "./contracts.ts";
 import { formatDate, parseDate } from "./date.ts";
-import type { DailyWork } from "./forecast/weekday-average.ts";
 import { invoiceDates, type InvoiceDates, type PaymentTerms } from "./payment-terms.ts";
 
 export interface InvoiceGuideProject {
@@ -9,7 +8,7 @@ export interface InvoiceGuideProject {
   readonly clientId: string | null;
   readonly name: string;
   readonly hourlyRate: number | null;
-  readonly work: readonly DailyWork[];
+  readonly work: readonly RatedDailyWork[];
 }
 
 export interface InvoiceGuideInput {
@@ -115,6 +114,7 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
     projectIds.add(project.id);
     let projectSeconds = 0;
     let missingContractSeconds = 0;
+    let missingRateSeconds = 0;
     for (const work of project.work) {
       parseDate(work.date, "work.date");
       if (!Number.isSafeInteger(work.seconds) || work.seconds < 0) {
@@ -128,13 +128,14 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
       const coverage = contractCoverage(contracts, project.id, work.date);
       const contractId = coverage !== null && !coverage.assumesRenewal ? coverage.contract.id : null;
       if (contractId === null) missingContractSeconds += work.seconds;
-      invoiceWork.push({ projectId: project.id, contractId, hourlyRate: project.hourlyRate, seconds: work.seconds });
+      if (work.hourlyRate === null) missingRateSeconds += work.seconds;
+      invoiceWork.push({ projectId: project.id, contractId, hourlyRate: work.hourlyRate, seconds: work.seconds });
     }
     if (client.lineGrouping === "contract" && missingContractSeconds > 0) {
       warnings.push({ kind: "missingContract", projectId: project.id, projectName: project.name, seconds: missingContractSeconds });
     }
-    if (project.hourlyRate === null && projectSeconds > 0) {
-      warnings.push({ kind: "missingRate", projectId: project.id, projectName: project.name, seconds: projectSeconds });
+    if (missingRateSeconds > 0) {
+      warnings.push({ kind: "missingRate", projectId: project.id, projectName: project.name, seconds: missingRateSeconds });
     }
   }
 

@@ -162,6 +162,18 @@ export function createRepository(db: Database): Repository {
         const repo = createRepository(tx);
         await repo.syncSolidtimeCatalog(catalog);
         await repo.replaceTimeEntries(period, entries);
+        // Compare instants, since ISO strings may use different UTC offsets.
+        // Include history outside this sync window, and preserve a latest null rate.
+        const saved = await tx.selectFrom("time_entries").select(["id", "solidtime_project_id", "start_at", "hourly_rate"])
+          .where("billable", "=", 1).where("start_at", "is not", null).execute();
+        saved.sort((a, b) => Date.parse(b.start_at!) - Date.parse(a.start_at!) || compare(a.id, b.id));
+        const updated = new Set<string>();
+        for (const entry of saved) {
+          const id = entry.solidtime_project_id;
+          if (id === null || updated.has(id)) continue;
+          updated.add(id);
+          await tx.updateTable("projects").set({ hourly_rate: entry.hourly_rate }).where("id", "=", id).execute();
+        }
       });
     },
     async updateClientBilling(id, billing) {
@@ -269,11 +281,18 @@ export function createRepository(db: Database): Repository {
       const rows = entries.map((entry) => {
         assertWithinPeriod(entry.date, period);
         integer(entry.seconds);
+        if (entry.hourlyRate !== null) {
+          const cents = entry.hourlyRate * 100;
+          if (entry.hourlyRate < 0 || !Number.isSafeInteger(Math.round(cents)) ||
+            Math.abs(cents - Math.round(cents)) > Number.EPSILON * Math.max(1, Math.abs(cents))) {
+            throw new RangeError("hourlyRate must be non-negative with at most two decimal places, or null");
+          }
+        }
         if (entry.start !== undefined) assertTimestamp(entry.start);
         if (entry.end !== undefined) assertTimestamp(entry.end);
         return {
           id: entry.id, solidtime_project_id: entry.solidtimeProjectId, date: entry.date,
-          seconds: entry.seconds, billable: Number(entry.billable),
+          seconds: entry.seconds, hourly_rate: entry.hourlyRate, billable: Number(entry.billable),
           start_at: entry.start ?? null, end_at: entry.end ?? null,
         };
       });
@@ -286,12 +305,12 @@ export function createRepository(db: Database): Repository {
       assertPeriod(period);
       const rows = await db.selectFrom("time_entries as e")
         .innerJoin("projects as p", "p.id", "e.solidtime_project_id")
-        .select(["p.id as projectId", "e.date"])
+        .select(["p.id as projectId", "e.date", "e.hourly_rate as hourlyRate"])
         .select((eb) => eb.fn.sum<StoredInteger>("e.seconds").as("seconds"))
         .where("e.billable", "=", 1).where("e.date", ">=", period.from).where("e.date", "<=", period.to)
-        .groupBy(["p.id", "e.date"]).execute();
-      return rows.map((row) => ({ ...row, seconds: integer(row.seconds) }))
-        .sort((a, b) => compare(a.projectId, b.projectId) || compare(a.date, b.date));
+        .groupBy(["p.id", "e.date", "e.hourly_rate"]).execute();
+      return rows.map((row) => ({ ...row, hourlyRate: row.hourlyRate === null ? null : Number(row.hourlyRate), seconds: integer(row.seconds) }))
+        .sort((a, b) => compare(a.projectId, b.projectId) || compare(a.date, b.date) || (a.hourlyRate ?? -1) - (b.hourlyRate ?? -1));
     },
     async listUnlinkedSolidtimeProjects(period) {
       assertPeriod(period);

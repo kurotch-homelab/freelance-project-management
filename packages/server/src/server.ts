@@ -43,7 +43,6 @@ export async function buildServer(config: Config, deps: ServerDeps = {}) {
       organizationId: config.solidtime.organizationId,
       token: config.solidtime.token,
       timeZone: config.timeZone,
-      ...(config.solidtime.memberId === null ? {} : { memberId: config.solidtime.memberId }),
     });
     const getAccessToken = d.createAdcTokenProvider([
       "https://www.googleapis.com/auth/calendar.events.readonly",
@@ -56,7 +55,7 @@ export async function buildServer(config: Config, deps: ServerDeps = {}) {
       solidtime: {
         listClients: () => solidtime.listClients(),
         listProjectsWithRates: () => solidtime.listProjectsWithRates(),
-        listTimeEntries: (period) => solidtime.listTimeEntries(period),
+        listTimeEntriesWithRates: (period) => solidtime.listTimeEntriesWithRates(period),
       },
       calendar, drive, clock: d.clock,
       config: {

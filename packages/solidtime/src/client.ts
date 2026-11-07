@@ -1,7 +1,7 @@
 import { assertResponse, SolidtimeApiError, SolidtimeAuthError } from "./errors.ts";
 import { arrayData, dataOf, isNonnegativeInteger, isRecord, parseClient, parseProject, parseTimeEntry } from "./responses.ts";
 import { createTimeZone } from "./time-zone.ts";
-import type { ListTimeEntriesOptions, ProjectDailyWork, SolidtimeClient, SolidtimeClientOptions, TimeEntry } from "./types.ts";
+import type { ListTimeEntriesOptions, SolidtimeClient, SolidtimeClientOptions, TimeEntry } from "./types.ts";
 
 export function createSolidtimeClient(options: SolidtimeClientOptions): SolidtimeClient {
   const { organizationId, token } = options;
@@ -10,7 +10,6 @@ export function createSolidtimeClient(options: SolidtimeClientOptions): Solidtim
   const fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
   const timeoutMs = options.timeoutMs ?? 30_000;
   const zone = createTimeZone(options.timeZone);
-  let memberId = options.memberId;
 
   async function request<T>(
     path: string,
@@ -55,36 +54,17 @@ export function createSolidtimeClient(options: SolidtimeClientOptions): Solidtim
     return parse(payload, response.status);
   }
 
-  async function resolveMemberId(): Promise<string> {
-    if (memberId !== undefined) return memberId;
-    memberId = await request("/users/me/memberships", (body, status) => {
-      const memberships = arrayData(body, status).map((membership) => {
-        assertResponse(
-          isRecord(membership) && typeof membership.id === "string" &&
-          isRecord(membership.organization) && typeof membership.organization.id === "string",
-          status, "membership fields",
-        );
-        return { id: membership.id, organizationId: membership.organization.id };
-      });
-      const membership = memberships.find((item) => item.organizationId === organizationId);
-      if (!membership) throw new SolidtimeApiError(status, "No membership found for the configured organization");
-      return membership.id;
-    });
-    return memberId;
-  }
-
   async function listTimeEntries({ from, to, pageSize = 500 }: ListTimeEntriesOptions): Promise<TimeEntry[]> {
     const { start, end } = zone.range(from, to);
     if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 500) {
       throw new RangeError("pageSize must be an integer from 1 through 500");
     }
-    const member = await resolveMemberId();
     const entries: TimeEntry[] = [];
     const seenIds = new Set<string>();
     let offset = 0;
     let total: number | undefined;
     do {
-      const query = new URLSearchParams({ start, end, member_id: member, limit: String(pageSize), offset: String(offset) });
+      const query = new URLSearchParams({ start, end, limit: String(pageSize), offset: String(offset) });
       const page = await request(`${organizationPath}/time-entries?${query}`, (body, status) => {
         const data = arrayData(body, status);
         assertResponse(isRecord(body) && isRecord(body.meta) && isNonnegativeInteger(body.meta.total), status, "meta.total");
@@ -135,49 +115,46 @@ export function createSolidtimeClient(options: SolidtimeClientOptions): Solidtim
 
   return {
     listTimeEntries,
-    async dailyWork(range) {
-      const projects = new Map<string, Map<string, number>>();
-      for (const entry of await listTimeEntries(range)) {
-        if (!entry.billable || entry.projectId === null) continue;
-        const days = projects.get(entry.projectId) ?? new Map<string, number>();
-        const seconds = (days.get(entry.date) ?? 0) + entry.seconds;
-        if (!Number.isSafeInteger(seconds)) throw new SolidtimeApiError(200, "Daily work total exceeds safe integer precision");
-        days.set(entry.date, seconds);
-        projects.set(entry.projectId, days);
-      }
-      const work: ProjectDailyWork[] = [];
-      for (const projectId of [...projects.keys()].sort()) {
-        const days = projects.get(projectId)!;
-        for (const date of [...days.keys()].sort()) work.push({ projectId, date, seconds: days.get(date)! });
-      }
-      return work;
-    },
     listProjects: () => listResources("projects", parseProject),
     listClients: () => listResources("clients", parseClient),
     async listProjectsWithRates() {
-      const member = await resolveMemberId();
+      const [projects, organizationRate] = await Promise.all([
+        listResources("projects", parseProject),
+        request(organizationPath, (body, status) => parseRate(dataOf(body, status), status)),
+      ]);
+      return projects.map((project) => ({ ...project, hourlyRate: project.hourlyRate ?? organizationRate }));
+    },
+    async listTimeEntriesWithRates(range) {
+      const entries = await listTimeEntries(range);
+      if (entries.length === 0) return [];
       const [projects, members, organizationRate] = await Promise.all([
         listResources("projects", parseProject),
         listResources("members", (value, status) => {
-          assertResponse(isRecord(value) && typeof value.id === "string", status, "member fields");
-          return { id: value.id, rate: parseRate(value, status) };
+          assertResponse(isRecord(value) && typeof value.id === "string" && typeof value.user_id === "string", status, "member fields");
+          return { id: value.id, userId: value.user_id, rate: parseRate(value, status) };
         }),
         request(organizationPath, (body, status) => parseRate(dataOf(body, status), status)),
       ]);
-      const myMember = members.find((item) => item.id === member);
-      if (!myMember) throw new SolidtimeApiError(200, "Configured member not found in organization");
-      // Fetch every page, even if another member appears before the token owner.
-      const result = [];
-      for (const project of projects) {
-        const projectMembers = await listResources(`projects/${encodeURIComponent(project.id)}/project-members`, (value, status) => {
+      const projectsById = new Map(projects.map((project) => [project.id, project]));
+      const membersByUser = new Map(members.map((member) => [member.userId, member]));
+      const projectRates = new Map<string, Map<string, number | null>>();
+      // Only projects with completed entries need their member rates, including every page.
+      for (const projectId of new Set(entries.flatMap((entry) => entry.projectId === null ? [] : [entry.projectId]))) {
+        const projectMembers = await listResources(`projects/${encodeURIComponent(projectId)}/project-members`, (value, status) => {
           assertResponse(isRecord(value) && typeof value.member_id === "string", status, "project member fields");
           return { memberId: value.member_id, rate: parseRate(value, status) };
         });
-        const rate = projectMembers.find((item) => item.memberId === member)?.rate
-          ?? project.hourlyRate ?? myMember.rate ?? organizationRate;
-        result.push({ ...project, hourlyRate: rate });
+        projectRates.set(projectId, new Map(projectMembers.map((member) => [member.memberId, member.rate])));
       }
-      return result;
+      return entries.map((entry) => {
+        const member = membersByUser.get(entry.userId);
+        // Former members' entries fall back to project and organization rates.
+        const projectMemberRate = entry.projectId !== null && member
+          ? projectRates.get(entry.projectId)?.get(member.id)
+          : null;
+        const projectRate = entry.projectId === null ? null : projectsById.get(entry.projectId)?.hourlyRate;
+        return { ...entry, hourlyRate: projectMemberRate ?? projectRate ?? member?.rate ?? organizationRate };
+      });
     },
   };
 }

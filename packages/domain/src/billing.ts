@@ -1,3 +1,9 @@
+import type { DailyWork } from "./forecast/weekday-average.ts";
+
+export interface RatedDailyWork extends DailyWork {
+  readonly hourlyRate: number | null;
+}
+
 export interface InvoiceEntry {
   readonly seconds: number;
   readonly hourlyRate: number;

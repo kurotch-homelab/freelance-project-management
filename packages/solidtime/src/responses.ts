@@ -69,7 +69,7 @@ export function parseTimeEntry(
 ): TimeEntry | null {
   assertResponse(isRecord(value), status, "time entry");
   assertResponse(
-    typeof value.id === "string" && isNullableString(value.project_id) &&
+    typeof value.id === "string" && typeof value.user_id === "string" && isNullableString(value.project_id) &&
     isTimestamp(value.start) && (value.end === null || isTimestamp(value.end)) &&
     isNullableString(value.description) && typeof value.billable === "boolean" &&
     (value.duration === null || isNonnegativeInteger(value.duration)),
@@ -82,6 +82,7 @@ export function parseTimeEntry(
   );
   return {
     id: value.id,
+    userId: value.user_id,
     projectId: value.project_id,
     start: value.start,
     end: value.end,

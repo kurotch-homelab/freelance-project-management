@@ -17,7 +17,7 @@ import { buildServer, type ServerDeps } from "./server.ts";
 const env = {
   DB_KIND: "sqlite", SQLITE_PATH: ":memory:",
   SOLIDTIME_BASE_URL: "https://solidtime.test", SOLIDTIME_ORGANIZATION_ID: "org",
-  SOLIDTIME_API_TOKEN: "private-solidtime-token", SOLIDTIME_MEMBER_ID: "member",
+  SOLIDTIME_API_TOKEN: "private-solidtime-token",
   GOOGLE_CALENDAR_ID: "calendar", GOOGLE_DRIVE_ID: "drive", GOOGLE_DRIVE_ROOT_FOLDER_ID: "root",
   OIDC_ISSUER: "https://idp.test", OIDC_CLIENT_ID: "fpm", OIDC_CLIENT_SECRET: "private-oidc-secret",
   OIDC_REDIRECT_URI: "https://app.test/auth/callback", ALLOWED_SUB: "owner",
@@ -49,14 +49,14 @@ afterEach(async () => {
 
 function dependencies() {
   const getAccessToken = vi.fn(async () => "test-access-token");
-  const listTimeEntries = vi.fn(async () => []);
+  const listTimeEntriesWithRates = vi.fn(async () => []);
   const listOutOfOffice = vi.fn(async () => []);
   return {
     createDatabase: vi.fn(createDatabase),
     migrateToLatest: vi.fn(migrateToLatest),
     createRepository: vi.fn(createRepository),
     createSolidtimeClient: vi.fn((options: Parameters<typeof createSolidtimeClient>[0]) => ({
-      ...createSolidtimeClient(options), listTimeEntries,
+      ...createSolidtimeClient(options), listTimeEntriesWithRates,
       listClients: vi.fn(async () => []), listProjectsWithRates: vi.fn(async () => []),
     })),
     createAdcTokenProvider: vi.fn(() => getAccessToken),
@@ -181,8 +181,8 @@ describe("buildServer", () => {
     const solidtime = deps.createSolidtimeClient.mock.results[0]!.value;
     const calendar = deps.createCalendarClient.mock.results[0]!.value;
     expect(solidtime.listClients.mock.invocationCallOrder[0]).toBeLessThan(solidtime.listProjectsWithRates.mock.invocationCallOrder[0]!);
-    expect(solidtime.listProjectsWithRates.mock.invocationCallOrder[0]).toBeLessThan(solidtime.listTimeEntries.mock.invocationCallOrder[0]!);
-    expect(solidtime.listTimeEntries.mock.invocationCallOrder[0]).toBeLessThan(calendar.listOutOfOffice.mock.invocationCallOrder[0]!);
+    expect(solidtime.listProjectsWithRates.mock.invocationCallOrder[0]).toBeLessThan(solidtime.listTimeEntriesWithRates.mock.invocationCallOrder[0]!);
+    expect(solidtime.listTimeEntriesWithRates.mock.invocationCallOrder[0]).toBeLessThan(calendar.listOutOfOffice.mock.invocationCallOrder[0]!);
   });
 
   it("logs failed syncs without secrets and continues with calendar", async () => {

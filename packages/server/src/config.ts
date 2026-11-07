@@ -11,7 +11,6 @@ export interface Config {
     readonly baseUrl: string;
     readonly organizationId: string;
     readonly token: string;
-    readonly memberId: string | null;
   };
   readonly google: { readonly calendarId: string; readonly driveId: string; readonly driveRootFolderId: string };
   readonly oidc: Pick<OidcAuthOptions, "issuer" | "clientId" | "clientAuth" | "redirectUri" | "allowed">;
@@ -73,7 +72,6 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     baseUrl: url("SOLIDTIME_BASE_URL"),
     organizationId: required("SOLIDTIME_ORGANIZATION_ID"),
     token: required("SOLIDTIME_API_TOKEN"),
-    memberId: optional("SOLIDTIME_MEMBER_ID") ?? null,
   };
   const google = {
     calendarId: required("GOOGLE_CALENDAR_ID"),

@@ -62,6 +62,7 @@ export interface HoursRangeOverridesTable {
 }
 
 export interface TimeEntriesTable {
+  hourly_rate: number | null;
   id: string;
   solidtime_project_id: string | null;
   date: string;

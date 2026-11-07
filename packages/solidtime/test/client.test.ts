@@ -2,7 +2,6 @@ import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createSolidtimeClient, SolidtimeApiError, SolidtimeAuthError } from "../src/index.ts";
-import memberships from "./fixtures/memberships.json" with { type: "json" };
 import page1 from "./fixtures/time-entries-page1.json" with { type: "json" };
 import page2 from "./fixtures/time-entries-page2.json" with { type: "json" };
 import projectsList from "./fixtures/projects-list.json" with { type: "json" };
@@ -13,7 +12,6 @@ import error401 from "./fixtures/error-401.json" with { type: "json" };
 const BASE = "https://solidtime.test";
 const ORG = "3f0aff22-3659-4916-9828-38f3aa7f4c23";
 const API = `${BASE}/api/v1/organizations/${ORG}`;
-const MEMBER = memberships.data[0]!.id;
 const PROJECT = page1.data[0]!.project_id;
 
 const server = setupServer();
@@ -30,11 +28,6 @@ afterEach(() => {
   recorded.length = 0;
 });
 
-const membershipsHandler = http.get(`${BASE}/api/v1/users/me/memberships`, ({ request }) => {
-  recorded.push(request.clone());
-  return HttpResponse.json(memberships);
-});
-
 /** limit / offset に応じて page1 / page2 を返す(フィクスチャは limit=2 で記録) */
 const timeEntriesHandler = http.get(`${API}/time-entries`, ({ request }) => {
   recorded.push(request.clone());
@@ -44,16 +37,16 @@ const timeEntriesHandler = http.get(`${API}/time-entries`, ({ request }) => {
 
 describe("listTimeEntries: 期間の打刻を取得する", () => {
   it("日本時間の日付の範囲を、UTC の start / end に直して送る", async () => {
-    server.use(membershipsHandler, timeEntriesHandler);
+    server.use(timeEntriesHandler);
     await client().listTimeEntries({ from: "2026-11-01", to: "2026-11-30", pageSize: 2 });
     const url = new URL(recorded.find((r) => r.url.includes("/time-entries"))!.url);
     expect(url.searchParams.get("start")).toBe("2026-10-31T15:00:00Z");
     expect(url.searchParams.get("end")).toBe("2026-11-30T15:00:00Z");
-    expect(url.searchParams.get("member_id")).toBe(MEMBER);
+    expect(url.searchParams.has("member_id")).toBe(false);
   });
 
   it("Authorization と Accept ヘッダを付ける", async () => {
-    server.use(membershipsHandler, timeEntriesHandler);
+    server.use(timeEntriesHandler);
     await client().listTimeEntries({ from: "2026-11-01", to: "2026-11-30", pageSize: 2 });
     for (const r of recorded) {
       expect(r.headers.get("authorization")).toBe("Bearer test-token");
@@ -62,7 +55,7 @@ describe("listTimeEntries: 期間の打刻を取得する", () => {
   });
 
   it("ページを送って全件取る(total 4 件、2 件ずつ)", async () => {
-    server.use(membershipsHandler, timeEntriesHandler);
+    server.use(timeEntriesHandler);
     const entries = await client().listTimeEntries({ from: "2026-11-01", to: "2026-11-30", pageSize: 2 });
     expect(entries).toHaveLength(4);
     const offsets = recorded
@@ -72,12 +65,13 @@ describe("listTimeEntries: 期間の打刻を取得する", () => {
   });
 
   it("打刻を日本時間の開始日・秒数・請求対象かどうかに直す", async () => {
-    server.use(membershipsHandler, timeEntriesHandler);
+    server.use(timeEntriesHandler);
     const entries = await client().listTimeEntries({ from: "2026-11-01", to: "2026-11-30", pageSize: 2 });
     const byDescription = (d: string) => entries.find((e) => e.description === d);
     // 11/02 23:00〜11/03 01:00(日本時間)は開始日の 11/02
     expect(byDescription("23:00-01:00 JST across midnight")).toMatchObject({
       projectId: PROJECT,
+      userId: page1.data[0]!.user_id,
       date: "2026-11-02",
       seconds: 7_200,
       billable: true,
@@ -88,14 +82,13 @@ describe("listTimeEntries: 期間の打刻を取得する", () => {
     expect(byDescription("non-billable 30m")).toMatchObject({ date: "2026-11-03", seconds: 1_800, billable: false });
   });
 
-  it("memberId を指定したらメンバーシップを取りに行かない", async () => {
+  it("メンバーシップを取りに行かずに全員の打刻を読む", async () => {
     server.use(timeEntriesHandler);
     const c = createSolidtimeClient({
       baseUrl: BASE,
       organizationId: ORG,
       token: "test-token",
       timeZone: "Asia/Tokyo",
-      memberId: MEMBER,
     });
     await expect(c.listTimeEntries({ from: "2026-11-01", to: "2026-11-30", pageSize: 2 })).resolves.toHaveLength(4);
   });
@@ -103,7 +96,6 @@ describe("listTimeEntries: 期間の打刻を取得する", () => {
   it("実行中の打刻(end が null)は除く", async () => {
     const running = { ...page1.data[0]!, id: "running", end: null, duration: null };
     server.use(
-      membershipsHandler,
       http.get(`${API}/time-entries`, () => HttpResponse.json({ data: [running], meta: { total: 1 } })),
     );
     await expect(client().listTimeEntries({ from: "2026-11-01", to: "2026-11-30" })).resolves.toEqual([]);
@@ -117,7 +109,6 @@ describe("listTimeEntries: 期間の打刻を取得する", () => {
 describe("ページを送っている途中の変化", () => {
   it("途中で total が変わったら失敗する(部分的な結果を返さない)", async () => {
     server.use(
-      membershipsHandler,
       http.get(`${API}/time-entries`, ({ request }) => {
         const offset = Number(new URL(request.url).searchParams.get("offset") ?? "0");
         return HttpResponse.json(offset === 0 ? page1 : { ...page2, meta: { total: 5 } });
@@ -130,7 +121,6 @@ describe("ページを送っている途中の変化", () => {
 
   it("ページをまたいで同じ打刻が返ってきたら失敗する(二重に数えない)", async () => {
     server.use(
-      membershipsHandler,
       http.get(`${API}/time-entries`, ({ request }) => {
         const offset = Number(new URL(request.url).searchParams.get("offset") ?? "0");
         return HttpResponse.json(offset === 0 ? page1 : { ...page2, data: [page1.data[1], page2.data[1]] });
@@ -144,7 +134,6 @@ describe("ページを送っている途中の変化", () => {
   it("実行中の打刻を除いても、offset は生のデータの件数で進める", async () => {
     const running = { ...page1.data[0]!, id: "running", end: null, duration: null };
     server.use(
-      membershipsHandler,
       http.get(`${API}/time-entries`, ({ request }) => {
         recorded.push(request.clone());
         const offset = Number(new URL(request.url).searchParams.get("offset") ?? "0");
@@ -160,26 +149,6 @@ describe("ページを送っている途中の変化", () => {
     expect(
       recorded.filter((r) => r.url.includes("/time-entries")).map((r) => new URL(r.url).searchParams.get("offset")),
     ).toEqual(["0", "2"]);
-  });
-});
-
-describe("dailyWork: 請求対象の打刻を、案件 × 日ごとの秒数にまとめる", () => {
-  it("請求対象外は除き、同じ案件・同じ日は合計する", async () => {
-    server.use(membershipsHandler, timeEntriesHandler);
-    const work = await client().dailyWork({ from: "2026-11-01", to: "2026-11-30", pageSize: 2 });
-    expect(work).toEqual([
-      { projectId: PROJECT, date: "2026-11-02", seconds: 12_600 + 7_200 },
-      { projectId: PROJECT, date: "2026-11-30", seconds: 3_600 },
-    ]);
-  });
-
-  it("案件のない打刻は除く", async () => {
-    const noProject = { ...page1.data[0]!, id: "np", project_id: null };
-    server.use(
-      membershipsHandler,
-      http.get(`${API}/time-entries`, () => HttpResponse.json({ data: [noProject], meta: { total: 1 } })),
-    );
-    await expect(client().dailyWork({ from: "2026-11-01", to: "2026-11-30" })).resolves.toEqual([]);
   });
 });
 
@@ -269,12 +238,8 @@ describe("エラー", () => {
     await expect(client().listProjects()).rejects.toBeInstanceOf(SolidtimeApiError);
   });
 
-  it("組織のメンバーシップが見つからなければ失敗する", async () => {
-    server.use(
-      http.get(`${BASE}/api/v1/users/me/memberships`, () => HttpResponse.json({ data: [] })),
-    );
-    await expect(client().listTimeEntries({ from: "2026-11-01", to: "2026-11-30" })).rejects.toThrow(
-      SolidtimeApiError,
-    );
+  it("打刻の取得が権限不足なら失敗する", async () => {
+    server.use(http.get(`${API}/time-entries`, () => HttpResponse.json({ message: "Forbidden" }, { status: 403 })));
+    await expect(client().listTimeEntries({ from: "2026-11-01", to: "2026-11-30" })).rejects.toMatchObject({ status: 403 });
   });
 });

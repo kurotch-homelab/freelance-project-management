@@ -185,9 +185,21 @@ const solidtimeSourceSchema: Migration = {
   },
 };
 
+const timeEntryRates: Migration = {
+  async up(db) {
+    // Existing entries have no user-specific rate; the next sync fills it in.
+    await db.schema.alterTable("time_entries")
+      .addColumn("hourly_rate", "double precision", (c) => c.check(sql`hourly_rate >= 0`))
+      .execute();
+  },
+  async down(db) {
+    await db.schema.alterTable("time_entries").dropColumn("hourly_rate").execute();
+  },
+};
+
 export const migrationProvider: MigrationProvider = {
   async getMigrations() {
-    return { "001_initial_schema": initialSchema, "002_solidtime_source": solidtimeSourceSchema };
+    return { "001_initial_schema": initialSchema, "002_solidtime_source": solidtimeSourceSchema, "003_time_entry_rates": timeEntryRates };
   },
 };
 

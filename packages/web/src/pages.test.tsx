@@ -351,7 +351,7 @@ it("取引先なし・単価なしの案件を名前と対処方法つきで知�
     ...dashboard, projectsWithoutClient: [{ id: "X", name: "案件 X" }], projectsWithoutRate: [{ id: "Y", name: "案件 Y" }],
   })) })} />);
   expect(await screen.findByText(/案件 X は取引先が未設定/)).toHaveTextContent("solidtime で取引先を設定");
-  expect(screen.getByText(/案件 Y は単価が未設定/)).toHaveTextContent("請求見込み額に含めていません");
+  expect(screen.getByText(/案件 Y の単価を確認してください/)).toHaveTextContent("請求見込み額に含めていません");
 });
 
 it("請求明細が全件単価なしでも、除外した時間と警告を表示する", async () => {
@@ -362,7 +362,7 @@ it("請求明細が全件単価なしでも、除外した時間と警告を表�
     warnings: [{ kind: "missingRate" as const, projectId: "Y", projectName: "案件 Y", seconds: 3 * HOUR }],
   })) })} />);
   await user.selectOptions(await screen.findByLabelText("取引先"), "client-a");
-  expect(await screen.findByText("案件 Y は単価が未設定のため、3 時間 を請求に入れていません")).toBeInTheDocument();
+  expect(await screen.findByText("案件 Y の稼働のうち、単価が未設定の 3 時間 を請求に入れていません")).toBeInTheDocument();
   expect(screen.getByText("請求に含められる明細はありません")).toBeInTheDocument();
 });
 

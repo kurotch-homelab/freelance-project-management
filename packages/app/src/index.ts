@@ -21,7 +21,7 @@ import { addDays, dateInTimeZone, forecastPeriods, monthPeriod } from "./dates.t
 
 export interface AppDeps {
   readonly repo: Repository;
-  readonly solidtime: Pick<SolidtimeClient, "listTimeEntries" | "listClients" | "listProjectsWithRates">;
+  readonly solidtime: Pick<SolidtimeClient, "listTimeEntriesWithRates" | "listClients" | "listProjectsWithRates">;
   readonly calendar: Pick<CalendarClient, "listOutOfOffice">;
   readonly drive: Pick<DriveClient, "ensureFolder" | "uploadFile" | "listFiles">;
   readonly clock: { now(): Date };
@@ -94,7 +94,7 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
         const period = { from: start < previousMonthStart ? start : previousMonthStart, to: asOf };
         const clients = await solidtime.listClients();
         const projects = await solidtime.listProjectsWithRates();
-        const entries = await solidtime.listTimeEntries(period);
+        const entries = await solidtime.listTimeEntriesWithRates(period);
         await repo.replaceSolidtimeData({
           clients: clients.map(({ id, name, isArchived }) => ({ id, name, archived: isArchived })),
           projects: projects.map(({ id, clientId, name, isArchived, hourlyRate }) => ({
@@ -105,6 +105,7 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
           solidtimeProjectId: entry.projectId,
           date: entry.date,
           seconds: entry.seconds,
+          hourlyRate: entry.hourlyRate,
           billable: entry.billable,
           start: entry.start,
           end: entry.end,
@@ -160,6 +161,7 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
         }] : [];
       }));
       const recentProjectIds = new Set(recentWork.filter((work) => work.seconds > 0).map((work) => work.projectId));
+      const missingRateProjectIds = new Set(recentWork.filter((work) => work.seconds > 0 && work.hourlyRate === null).map((work) => work.projectId));
       const warningProjects = projects.filter((project) => !project.archived || recentProjectIds.has(project.id));
       const uncovered = new Map<string, number>();
       for (const work of recentWork) {
@@ -193,7 +195,6 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
             const coverage = contractCoverage(contracts, row.projectId, row.date);
             return {
               ...row, contractId: coverage !== null && !coverage.assumesRenewal ? coverage.contract.id : null,
-              hourlyRate: projectById.get(row.projectId)?.hourlyRate ?? null,
             };
           }),
           ...forecast.filter((row) => row.date.slice(0, 7) === month).map((row) => ({
@@ -235,7 +236,7 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
         contractProjectMismatches,
         workWithoutContract: projects.flatMap(({ id, name }) => uncovered.has(id) ? [{ projectId: id, name, seconds: uncovered.get(id)! }] : []),
         projectsWithoutClient: warningProjects.filter((p) => p.clientId === null).map(({ id, name }) => ({ id, name })),
-        projectsWithoutRate: warningProjects.filter((p) => p.hourlyRate === null).map(({ id, name }) => ({ id, name })),
+        projectsWithoutRate: warningProjects.filter((p) => p.hourlyRate === null || missingRateProjectIds.has(p.id)).map(({ id, name }) => ({ id, name })),
         months,
         sync: { solidtime: solidtimeStatus, calendar: calendarStatus },
       };

@@ -1,4 +1,4 @@
-import type { Contract, DailyWork, HoursRangeOverride, PaymentTerms } from "@fpm/domain";
+import type { Contract, RatedDailyWork, HoursRangeOverride, PaymentTerms } from "@fpm/domain";
 
 export interface ClientRecord {
   readonly id: string;
@@ -39,7 +39,7 @@ export interface HoursRangeOverrideFilter {
   readonly contractId?: string;
 }
 
-export interface TimeEntryRecord extends DailyWork {
+export interface TimeEntryRecord extends RatedDailyWork {
   readonly id: string;
   readonly solidtimeProjectId: string | null;
   readonly billable: boolean;
@@ -47,7 +47,7 @@ export interface TimeEntryRecord extends DailyWork {
   readonly end?: string;
 }
 
-export interface ProjectDailyWork extends DailyWork {
+export interface ProjectDailyWork extends RatedDailyWork {
   readonly projectId: string;
 }
 

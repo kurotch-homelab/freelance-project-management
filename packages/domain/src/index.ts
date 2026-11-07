@@ -1,5 +1,5 @@
 export { billableHours, lineAmount, consumptionTax, summarizeInvoice, groupInvoiceWork } from "./billing.ts";
-export type { InvoiceWork, InvoiceWorkGroup } from "./billing.ts";
+export type { InvoiceWork, InvoiceWorkGroup, RatedDailyWork } from "./billing.ts";
 export { validateClientBilling } from "./client-billing.ts";
 export type { ClientBilling } from "./client-billing.ts";
 export type { InvoiceEntry, InvoiceLine, InvoiceSummary } from "./billing.ts";

@@ -47,8 +47,8 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
   it("実績 + 予測 = 着地見込み。請求見込み額と目安時間の判定を出す", () => {
     const [c] = outlookFor({
       actual: [
-        { projectId: "X", date: "2026-11-10", seconds: 60 * HOUR },
-        { projectId: "Y", date: "2026-11-10", seconds: 20 * HOUR },
+        { projectId: "X", date: "2026-11-10", seconds: 60 * HOUR, hourlyRate: 5000 },
+        { projectId: "Y", date: "2026-11-10", seconds: 20 * HOUR, hourlyRate: 5000 },
       ],
       forecast: [row("X", "2026-11-20", 40 * HOUR), row("Y", "2026-11-20", 20 * HOUR)],
     });
@@ -70,7 +70,7 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
 
   it("目安時間は契約配下の全案件の合計と比べる: 着地見込み 120h、下限 140h → 20h 不足", () => {
     const [c] = outlookFor({
-      actual: [{ projectId: "X", date: "2026-11-10", seconds: 80 * HOUR }],
+      actual: [{ projectId: "X", date: "2026-11-10", seconds: 80 * HOUR, hourlyRate: 5000 }],
       forecast: [row("Y", "2026-11-20", 40 * HOUR)],
     });
     expect(c?.warnings).toEqual([{ kind: "belowMinForecast", seconds: 20 * HOUR }]);
@@ -79,7 +79,7 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
   it("案件ごとの目安時間も設定できる: Y の上限 30h、Y の着地見込み 40h → Y に 10h 超過の警告", () => {
     const [c] = outlookFor({
       contracts: [contract({ projectHoursRanges: { Y: { maxHours: 30 } } })],
-      actual: [{ projectId: "X", date: "2026-11-10", seconds: 110 * HOUR }],
+      actual: [{ projectId: "X", date: "2026-11-10", seconds: 110 * HOUR, hourlyRate: 5000 }],
       forecast: [row("Y", "2026-11-20", 40 * HOUR)],
     });
     expect(c?.warnings).toEqual([]);
@@ -91,7 +91,7 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
   it("月の上書きは契約全体にも案件にも使える", () => {
     const [c] = outlookFor({
       contracts: [contract({ projectHoursRanges: { Y: { maxHours: 30 } } })],
-      actual: [{ projectId: "X", date: "2026-11-10", seconds: 155 * HOUR }],
+      actual: [{ projectId: "X", date: "2026-11-10", seconds: 155 * HOUR, hourlyRate: 5000 }],
       forecast: [row("Y", "2026-11-20", 40 * HOUR)],
       hoursRangeOverrides: [
         { contractId: "c1", projectId: null, month, range: { minHours: 140, maxHours: 200 }, note: "" },
@@ -115,22 +115,22 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
     const [c] = outlookFor({
       contracts: [contract({ hoursRange: {} })],
       actual: [
-        { projectId: "X", date: "2026-10-31", seconds: 100 * HOUR },
-        { projectId: "X", date: "2026-11-15", seconds: 1 * HOUR },
-        { projectId: "X", date: "2026-11-16", seconds: 100 * HOUR },
+        { projectId: "X", date: "2026-10-31", seconds: 100 * HOUR, hourlyRate: 5000 },
+        { projectId: "X", date: "2026-11-15", seconds: 1 * HOUR, hourlyRate: 5000 },
+        { projectId: "X", date: "2026-11-16", seconds: 100 * HOUR, hourlyRate: 5000 },
       ],
       forecast: [row("X", "2026-11-20", 2 * HOUR), row("X", "2026-12-01", 100 * HOUR)],
     });
     expect(c).toMatchObject({ actualSeconds: 1 * HOUR, forecastSeconds: 2 * HOUR });
   });
 
-  it("請求見込み額は案件ごとの今の単価を使う: Y だけ 7,000 円", () => {
+  it("実績の見込み額は稼働の単価を使う: Y だけ 7,000 円", () => {
     const [c] = outlookFor({
       projects: [{ id: "X", hourlyRate: 5_000 }, { id: "Y", hourlyRate: 7_000 }],
       contracts: [contract({ hoursRange: {} })],
       actual: [
-        { projectId: "X", date: "2026-11-10", seconds: 10 * HOUR },
-        { projectId: "Y", date: "2026-11-10", seconds: 10 * HOUR },
+        { projectId: "X", date: "2026-11-10", seconds: 10 * HOUR, hourlyRate: 5000 },
+        { projectId: "Y", date: "2026-11-10", seconds: 10 * HOUR, hourlyRate: 7000 },
       ],
     });
     expect(c?.estimate.subtotal).toBe(120_000);
@@ -142,7 +142,7 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
         contract({ id: "c1", end: "2026-11-15", hoursRange: {} }),
         contract({ id: "c2", start: "2026-11-16", hoursRange: {} }),
       ],
-      actual: [{ projectId: "X", date: "2026-11-10", seconds: 10 * HOUR }],
+      actual: [{ projectId: "X", date: "2026-11-10", seconds: 10 * HOUR, hourlyRate: 5000 }],
       forecast: [row("X", "2026-11-20", 5 * HOUR)],
     });
     expect(outlooks.map((o) => [o.contractId, o.landingSeconds, o.estimate.subtotal])).toEqual([
@@ -217,7 +217,7 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
     expect(() =>
       outlookFor({
         contracts: [contract({ start: "2026-11-11" })],
-        actual: [{ projectId: "X", date: "2026-11-10", seconds: HOUR }],
+        actual: [{ projectId: "X", date: "2026-11-10", seconds: HOUR, hourlyRate: 5000 }],
       }),
     ).toThrow(RangeError);
   });
@@ -243,7 +243,7 @@ describe("monthOutlook: 契約ごとの月の着地見込み", () => {
 it("単価なしの実績と予測も時間と目安時間の警告には含め、金額だけ除外する", () => {
   const [c] = outlookFor({
     projects: [{ id: "X", hourlyRate: 5000 }, { id: "Y", hourlyRate: null }],
-    actual: [{ projectId: "X", date: "2026-11-01", seconds: HOUR }, { projectId: "Y", date: "2026-11-01", seconds: 2 * HOUR }],
+    actual: [{ projectId: "X", date: "2026-11-01", seconds: HOUR, hourlyRate: 5000 }, { projectId: "Y", date: "2026-11-01", seconds: 2 * HOUR, hourlyRate: null }],
     forecast: [row("Y", "2026-11-20", 3 * HOUR)],
   });
   expect(c).toMatchObject({
@@ -251,4 +251,19 @@ it("単価なしの実績と予測も時間と目安時間の警告には含め�
     estimate: { subtotal: 5000 },
     warnings: [{ kind: "belowMinForecast", seconds: 134 * HOUR }],
   });
+});
+
+it("同じ案件の実績は単価別に合算し、予測だけ今の単価を使う", () => {
+  const [c] = outlookFor({
+    projects: [{ id: "X", hourlyRate: 6000.25 }],
+    contracts: [contract({ projectIds: ["X"], hoursRange: {} })],
+    actual: [
+      { projectId: "X", date: "2026-11-01", seconds: 20, hourlyRate: 4850.25 },
+      { projectId: "X", date: "2026-11-02", seconds: 20, hourlyRate: 4850.25 },
+      { projectId: "X", date: "2026-11-02", seconds: 20, hourlyRate: 6000.25 },
+      { projectId: "X", date: "2026-11-02", seconds: 3600, hourlyRate: null },
+    ],
+    forecast: [row("X", "2026-11-20", 20)],
+  });
+  expect(c).toMatchObject({ actualSeconds: 3660, forecastSeconds: 20, landingSeconds: 3680, estimate: { subtotal: 108 } });
 });

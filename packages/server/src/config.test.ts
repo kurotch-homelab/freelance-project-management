@@ -34,7 +34,6 @@ describe("loadConfig: 環境変数から設定を読む", () => {
         baseUrl: "https://solidtime.example.com",
         organizationId: "org-1",
         token: "st-token-value",
-        memberId: null,
       },
       google: { calendarId: "me@example.com", driveId: "shared-drive-1", driveRootFolderId: "root-folder" },
       oidc: {
@@ -73,7 +72,6 @@ describe("loadConfig: 環境変数から設定を読む", () => {
       FORECAST_WEEKS: "12",
       FORECAST_MONTHS: "6",
       SYNC_INTERVAL_MINUTES: "60",
-      SOLIDTIME_MEMBER_ID: "m-1",
       SESSION_TTL_SECONDS: "3600",
       SECURE_COOKIES: "false",
       ALLOWED_SUB: "user-1",
@@ -84,7 +82,6 @@ describe("loadConfig: 環境変数から設定を読む", () => {
       timeZone: "UTC",
       forecast: { weeks: 12, months: 6 },
       syncIntervalMinutes: 60,
-      solidtime: { memberId: "m-1" },
       session: { ttlSeconds: 3_600, secureCookies: false },
       oidc: { allowed: { email: "me@example.com", sub: "user-1" } },
       staticDir: "/app/web",

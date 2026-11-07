@@ -45,7 +45,7 @@ function GuideContent({ guide }: { guide: InvoiceGuide }) {
       {notice && <Alert key={notice.id} tone={notice.error ? "danger" : "success"}>{notice.text}</Alert>}
       {guide.warnings.map((warning) => <Alert key={`${warning.kind}:${warning.projectId}`} tone="warning">
         {warning.kind === "missingRate"
-          ? `${warning.projectName} は単価が未設定のため、${formatHours(warning.seconds)} を請求に入れていません`
+          ? `${warning.projectName} の稼働のうち、単価が未設定の ${formatHours(warning.seconds)} を請求に入れていません`
           : `${warning.projectName}: 契約に入っていない稼働 ${formatHours(warning.seconds)}`}
       </Alert>)}
       {guide.lines.length === 0 && <EmptyState title="請求に含められる明細はありません" />}

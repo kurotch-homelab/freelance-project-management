@@ -5,7 +5,7 @@ export type {
   Client,
   ListTimeEntriesOptions,
   Project,
-  ProjectDailyWork,
+  TimeEntryWithRate,
   SolidtimeClient,
   SolidtimeClientOptions,
   TimeEntry,

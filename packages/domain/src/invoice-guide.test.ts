@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { DailyWork } from "./forecast/weekday-average.ts";
 import type { Contract } from "./contracts.ts";
 import { invoiceGuide, type InvoiceGuideInput, type InvoiceGuideProject } from "./invoice-guide.ts";
 
@@ -25,8 +26,8 @@ const contract = (over: Partial<Contract> = {}): Contract => ({
   ...over,
 });
 
-const X = (work: InvoiceGuideProject["work"], hourlyRate: number | null = 5_000): InvoiceGuideProject => ({ id: "X", clientId: "client-a", name: "案件 X", hourlyRate, work });
-const Y = (work: InvoiceGuideProject["work"], hourlyRate: number | null = 5_000): InvoiceGuideProject => ({ id: "Y", clientId: "client-a", name: "案件 Y", hourlyRate, work });
+const X = (work: readonly DailyWork[], hourlyRate: number | null = 5_000): InvoiceGuideProject => ({ id: "X", clientId: "client-a", name: "案件 X", hourlyRate, work: work.map((row) => ({ ...row, hourlyRate })) });
+const Y = (work: readonly DailyWork[], hourlyRate: number | null = 5_000): InvoiceGuideProject => ({ id: "Y", clientId: "client-a", name: "案件 Y", hourlyRate, work: work.map((row) => ({ ...row, hourlyRate })) });
 
 const guideFor = (over: Partial<InvoiceGuideInput>) =>
   invoiceGuide({ month: "2026-11", client: client(), contracts: [contract()], projects: [], ...over });
@@ -188,7 +189,7 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
       ].join("\n"));
     });
 
-    it("今の単価が違う案件は、案件名を添えて単価ごとに行を分ける", () => {
+    it("稼働の単価が違う案件は、案件名を添えて単価ごとに行を分ける", () => {
       const guide = guideFor({
         client: client({ lineGrouping: "contract" }),
         contracts: [contract()],
@@ -229,7 +230,7 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
       expect(guide?.lines.map((l) => l.item)).toEqual(["案件 X 2026年11月分"]);
     });
 
-    it("案件ごと: 月内に 3 契約があっても、今の単価で 1 行にまとめる", () => {
+    it("案件ごと: 月内に 3 契約があっても、稼働の単価が同じなら 1 行にまとめる", () => {
       const guide = guideFor({
         contracts: [
           contract({ id: "c1", end: "2026-11-10" }),
@@ -249,7 +250,7 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
       ]);
     });
 
-    it("案件ごと: 契約の境界日の稼働も合算し、今の案件単価を使う", () => {
+    it("案件ごと: 契約の境界日の稼働も合算し、稼働の単価を使う", () => {
       const guide = guideFor({
         contracts: renewed,
         projects: [X([{ date: "2026-11-15", seconds: HOUR }, { date: "2026-11-16", seconds: HOUR }])],
@@ -337,7 +338,7 @@ describe("invoiceGuide: freee で請求書を作るときに入力する内容�
 
   it("ほかの取引先の案件が入っていたら受け付けない", () => {
     expect(() =>
-      guideFor({ projects: [{ id: "X", clientId: "client-b", name: "案件 X", hourlyRate: 5_000, work: [{ date: "2026-11-10", seconds: HOUR }] }] }),
+      guideFor({ projects: [{ id: "X", clientId: "client-b", name: "案件 X", hourlyRate: 5_000, work: [{ date: "2026-11-10", seconds: HOUR, hourlyRate: 5000 }] }] }),
     ).toThrow(RangeError);
   });
 

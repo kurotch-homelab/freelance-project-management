@@ -1,4 +1,4 @@
-import { summarizeInvoice, type InvoiceSummary } from "./billing.ts";
+import { groupInvoiceWork, summarizeInvoice, type InvoiceSummary, type InvoiceWork } from "./billing.ts";
 import { contractCoverage, validateContracts, type Contract } from "./contracts.ts";
 import { parseDate } from "./date.ts";
 import type { ForecastRow } from "./forecast/forecast-days.ts";
@@ -24,6 +24,7 @@ export interface MonthOutlookInput {
     readonly projectId: string;
     readonly date: string;
     readonly seconds: number;
+    readonly hourlyRate: number | null;
   }[];
   readonly forecast: readonly ForecastRow[];
   readonly hoursRangeOverrides: readonly MonthOutlookHoursRangeOverride[];
@@ -95,6 +96,7 @@ export function monthOutlook(input: MonthOutlookInput): readonly MonthOutlook[] 
   }
 
   const totals = new Map<string, ContractTotals>();
+  const invoiceWork: InvoiceWork[] = [];
   for (const contract of contracts) {
     const overrides = hoursRangeOverrides.filter((override) => override.contractId === contract.id);
     const projectRanges = new Map(Object.entries(contract.projectHoursRanges ?? {}));
@@ -134,6 +136,7 @@ export function monthOutlook(input: MonthOutlookInput): readonly MonthOutlook[] 
     }
     const project = totals.get(coverage.contract.id)!.projects.get(work.projectId)!;
     project.actualSeconds = addSeconds(project.actualSeconds, work.seconds);
+    invoiceWork.push({ ...work, contractId: coverage.contract.id });
   }
 
   // asOf より後の日の予測は forecastDays で生成する。ここでは対象月だけを絞り込む。
@@ -153,6 +156,10 @@ export function monthOutlook(input: MonthOutlookInput): readonly MonthOutlook[] 
     const project = group.projects.get(row.projectId)!;
     project.forecastSeconds = addSeconds(project.forecastSeconds, row.seconds);
     group.assumesRenewal ||= coverage.assumesRenewal;
+    invoiceWork.push({
+      ...row, contractId: coverage.contract.id,
+      hourlyRate: input.projects.find((p) => p.id === row.projectId)?.hourlyRate ?? null,
+    });
   }
 
   return Array.from(totals.values()).filter((group) => {
@@ -183,10 +190,9 @@ export function monthOutlook(input: MonthOutlookInput): readonly MonthOutlook[] 
     });
     const actualSeconds = projects.reduce((sum, project) => addSeconds(sum, project.actualSeconds), 0);
     const forecastSeconds = projects.reduce((sum, project) => addSeconds(sum, project.forecastSeconds), 0);
-    const { subtotal } = summarizeInvoice(projects.flatMap((project) => {
-      const hourlyRate = input.projects.find((p) => p.id === project.projectId)?.hourlyRate ?? null;
-      return hourlyRate === null ? [] : [{ seconds: project.landingSeconds, hourlyRate }];
-    }));
+    const { subtotal } = summarizeInvoice(groupInvoiceWork(
+      invoiceWork.filter((row) => row.contractId === contract.id), "project",
+    ));
     return {
       contractId: contract.id,
       contractName: contract.name,

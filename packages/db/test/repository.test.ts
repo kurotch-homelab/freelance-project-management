@@ -144,12 +144,12 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
 
     it("打刻の保存失敗でも、カタログと前回の打刻をまとめて戻す", async () => {
       const period = { from: "2026-11-01", to: "2026-11-30" };
-      const entry = { id: "e1", solidtimeProjectId: "X", date: "2026-11-01", seconds: 3600, billable: true };
+      const entry = { id: "e1", solidtimeProjectId: "X", date: "2026-11-01", seconds: 3600, billable: true, hourlyRate: 5000 };
       await repo.replaceSolidtimeData({ clients: [clientA], projects: [projectX] }, period, [entry]);
       await expect(repo.replaceSolidtimeData({ clients: [], projects: [] }, period, [entry, entry])).rejects.toThrow();
       await expect(repo.getClient("client-a")).resolves.toEqual(clientA);
       await expect(repo.listProjects()).resolves.toEqual([projectX]);
-      await expect(repo.listDailyWork(period)).resolves.toEqual([{ projectId: "X", date: "2026-11-01", seconds: 3600 }]);
+      await expect(repo.listDailyWork(period)).resolves.toEqual([{ projectId: "X", date: "2026-11-01", seconds: 3600, hourlyRate: 5000 }]);
     });
   });
 
@@ -230,6 +230,7 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
       date,
       seconds,
       billable,
+      hourlyRate: 5000,
     });
 
     it("期間を指定して入れ替え、案件 × 日の請求対象の合計を読む", async () => {
@@ -239,8 +240,57 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
         entry("e3", "2026-11-03", 900, false),
       ]);
       await expect(repo.listDailyWork({ from: "2026-11-01", to: "2026-11-30" })).resolves.toEqual([
-        { projectId: "X", date: "2026-11-02", seconds: 5_400 },
+        { projectId: "X", date: "2026-11-02", seconds: 5_400, hourlyRate: 5000 },
       ]);
+    });
+
+    it("同じ案件・日でも単価ごとに集計し、未設定・0 円・小数単価を区別する", async () => {
+      const period = { from: "2026-11-01", to: "2026-11-30" };
+      await repo.replaceTimeEntries(period, [
+        { ...entry("a", "2026-11-02", 12600), hourlyRate: 6000.25 },
+        { ...entry("b", "2026-11-02", 7200), hourlyRate: 6000.25 },
+        { ...entry("c", "2026-11-02", 3600), hourlyRate: 5000 },
+        { ...entry("d", "2026-11-02", 1800), hourlyRate: null },
+        { ...entry("e", "2026-11-02", 900), hourlyRate: 0 },
+        entry("nonbillable", "2026-11-02", 1800, false),
+        { ...entry("no-project", "2026-11-02", 1800), solidtimeProjectId: null },
+        entry("month-end", "2026-11-30", 3600),
+      ]);
+      expect(await repo.listDailyWork(period)).toEqual([
+        { projectId: "X", date: "2026-11-02", seconds: 1800, hourlyRate: null },
+        { projectId: "X", date: "2026-11-02", seconds: 900, hourlyRate: 0 },
+        { projectId: "X", date: "2026-11-02", seconds: 3600, hourlyRate: 5000 },
+        { projectId: "X", date: "2026-11-02", seconds: 19800, hourlyRate: 6000.25 },
+        { projectId: "X", date: "2026-11-30", seconds: 3600, hourlyRate: 5000 },
+      ]);
+    });
+
+    it.each([null, 0])("今の単価は開始時刻が最新の billable な打刻。%s もそのまま使い、削除後は残った打刻から選ぶ", async (latestRate) => {
+      const catalog = { clients: [clientA], projects: [projectX, projectY] };
+      const period = { from: "2026-11-01", to: "2026-11-30" };
+      const older = { ...entry("older", "2026-11-02", 3600), start: "2026-11-02T10:00:00+09:00", hourlyRate: 6000.25 };
+      const newer = { ...entry("newer", "2026-11-02", 3600), start: "2026-11-02T02:00:00Z", hourlyRate: latestRate };
+      await repo.replaceSolidtimeData(catalog, period, [
+        newer, older, { ...entry("nonbillable", "2026-11-03", 3600, false), start: "2026-11-03T00:00:00Z", hourlyRate: 9999 },
+      ]);
+      expect((await repo.listProjects()).map((p) => [p.id, p.hourlyRate])).toEqual([["X", latestRate], ["Y", 7000]]);
+      await repo.replaceSolidtimeData(catalog, period, [older]);
+      expect((await repo.listProjects())[0]?.hourlyRate).toBe(6000.25);
+      // A sync of a later month must still use the saved latest entry.
+      await repo.replaceSolidtimeData(catalog, { from: "2026-12-01", to: "2026-12-31" }, []);
+      expect((await repo.listProjects())[0]?.hourlyRate).toBe(6000.25);
+      await repo.replaceSolidtimeData(catalog, period, []);
+      expect((await repo.listProjects())[0]?.hourlyRate).toBe(5000);
+    });
+
+    it.each([-1, NaN, Infinity, 5000.001])("不正な打刻単価 %s では前の打刻とカタログを残す", async (hourlyRate) => {
+      const period = { from: "2026-11-01", to: "2026-11-30" };
+      const catalog = { clients: [clientA], projects: [projectX] };
+      await repo.replaceSolidtimeData(catalog, period, [entry("a", "2026-11-02", 3600)]);
+      await expect(repo.replaceSolidtimeData({ ...catalog, projects: [{ ...projectX, name: "changed" }] }, period,
+        [{ ...entry("b", "2026-11-02", 3600), hourlyRate }])).rejects.toThrow(RangeError);
+      expect(await repo.listProjects()).toEqual([projectX]);
+      expect(await repo.listDailyWork(period)).toEqual([{ projectId: "X", date: "2026-11-02", seconds: 3600, hourlyRate: 5000 }]);
     });
 
     it("入れ替えは期間の中だけ消す(期間の外は残す)", async () => {
@@ -250,8 +300,8 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
       ]);
       await repo.replaceTimeEntries({ from: "2026-11-01", to: "2026-11-30" }, [entry("e2", "2026-11-05", 600)]);
       await expect(repo.listDailyWork({ from: "2026-10-01", to: "2026-11-30" })).resolves.toEqual([
-        { projectId: "X", date: "2026-10-15", seconds: 3_600 },
-        { projectId: "X", date: "2026-11-05", seconds: 600 },
+        { projectId: "X", date: "2026-10-15", seconds: 3_600, hourlyRate: 5000 },
+        { projectId: "X", date: "2026-11-05", seconds: 600, hourlyRate: 5000 },
       ]);
     });
 
@@ -274,7 +324,7 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
         { ...entry("c", "2026-11-01", 900), solidtimeProjectId: "unknown" },
         { ...entry("d", "2026-11-01", 600, false), solidtimeProjectId: null },
       ]);
-      await expect(repo.listDailyWork(period)).resolves.toEqual([{ projectId: "X", date: "2026-11-01", seconds: 3600 }]);
+      await expect(repo.listDailyWork(period)).resolves.toEqual([{ projectId: "X", date: "2026-11-01", seconds: 3600, hourlyRate: 5000 }]);
       await expect(repo.listUnlinkedSolidtimeProjects(period)).resolves.toEqual([
         { solidtimeProjectId: null, seconds: 1800 }, { solidtimeProjectId: "unknown", seconds: 900 },
       ]);
@@ -295,7 +345,7 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
         ]),
       ).rejects.toThrow();
       await expect(repo.listDailyWork({ from: "2026-11-01", to: "2026-11-30" })).resolves.toEqual([
-        { projectId: "X", date: "2026-11-02", seconds: 3_600 },
+        { projectId: "X", date: "2026-11-02", seconds: 3_600, hourlyRate: 5000 },
       ]);
     });
   });

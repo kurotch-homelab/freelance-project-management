@@ -50,6 +50,8 @@ const stEntry = (id: string, projectId: string | null, date: string, seconds: nu
   start: `${date}T00:00:00Z`,
   end: `${date}T01:00:00Z`,
   description: null,
+  userId: "user-me",
+  hourlyRate: projectId === "Y" ? 7000 : 5000,
 });
 
 /** 直近 8 週の月曜(11/09 から 7 日ずつさかのぼる) */
@@ -57,7 +59,7 @@ const mondays = ["2026-11-09", "2026-11-02", "2026-10-26", "2026-10-19", "2026-1
 
 const fakes = () => ({
   solidtime: {
-    listTimeEntries: vi.fn(async () => mondays.map((d, i) => stEntry(`e${i}`, "X", d, 4 * HOUR))),
+    listTimeEntriesWithRates: vi.fn(async () => mondays.map((d, i) => stEntry(`e${i}`, "X", d, 4 * HOUR))),
     listClients: vi.fn(async () => [{ id: clientA.id, name: clientA.name, isArchived: false }]),
     listProjectsWithRates: vi.fn(async () => [projectX, projectY].map((p) => ({
       ...p, isArchived: p.archived, color: "#ef5350", isBillable: true, isPublic: false, estimatedTime: null,
@@ -110,14 +112,14 @@ describe("createApp: ユースケース", () => {
   describe("syncSolidtime: solidtime の打刻を取り込む", () => {
     it("予測に使う直近 N 週と先月の初めのうち早いほうから、今日までを取り込む", async () => {
       await app.syncSolidtime();
-      expect(f.solidtime.listTimeEntries).toHaveBeenCalledWith(
+      expect(f.solidtime.listTimeEntriesWithRates).toHaveBeenCalledWith(
         expect.objectContaining({ from: "2026-09-20", to: "2026-11-15" }),
       );
       await expect(repo.listDailyWork({ from: "2026-09-20", to: "2026-11-15" })).resolves.toHaveLength(8);
     });
 
     it("成功を記録し、案件に結びついていない solidtime のプロジェクトを返す", async () => {
-      f.solidtime.listTimeEntries.mockResolvedValueOnce([
+      f.solidtime.listTimeEntriesWithRates.mockResolvedValueOnce([
         stEntry("a", "X", "2026-11-10", HOUR),
         stEntry("b", "st-unknown", "2026-11-10", 2 * HOUR),
       ]);
@@ -128,7 +130,7 @@ describe("createApp: ユースケース", () => {
 
     it("失敗したら前に取り込んだ分は残し、失敗を記録して返す(例外にしない)", async () => {
       await app.syncSolidtime();
-      f.solidtime.listTimeEntries.mockRejectedValueOnce(new Error("Solidtime request failed (HTTP 500)"));
+      f.solidtime.listTimeEntriesWithRates.mockRejectedValueOnce(new Error("Solidtime request failed (HTTP 500)"));
       await expect(app.syncSolidtime()).resolves.toEqual({ ok: false, error: "Solidtime request failed (HTTP 500)" });
       await expect(repo.listDailyWork({ from: "2026-09-20", to: "2026-11-15" })).resolves.toHaveLength(8);
       await expect(repo.getSyncStatus("solidtime")).resolves.toMatchObject({
@@ -137,7 +139,7 @@ describe("createApp: ユースケース", () => {
     });
   });
 
-  it.each(["listClients", "listProjectsWithRates", "listTimeEntries"] as const)("%s が失敗してもカタログと打刻を保持し、次の同期は実行できる", async (method) => {
+  it.each(["listClients", "listProjectsWithRates", "listTimeEntriesWithRates"] as const)("%s が失敗してもカタログと打刻を保持し、次の同期は実行できる", async (method) => {
     await app.syncSolidtime();
     const catalog = await repo.listProjects({ includeArchived: true });
     f.solidtime[method].mockRejectedValueOnce(new Error("catalog unavailable"));
@@ -150,24 +152,24 @@ describe("createApp: ユースケース", () => {
   describe("同期の重なり", () => {
     it("同じ同期が実行中なら、次の同期は実行せず busy を返す", async () => {
       let release: () => void = () => {};
-      f.solidtime.listTimeEntries.mockImplementationOnce(
+      f.solidtime.listTimeEntriesWithRates.mockImplementationOnce(
         () => new Promise((resolve) => (release = () => resolve([]))),
       );
       const first = app.syncSolidtime();
-      await vi.waitFor(() => expect(f.solidtime.listTimeEntries).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(f.solidtime.listTimeEntriesWithRates).toHaveBeenCalledTimes(1));
       await expect(app.syncSolidtime()).resolves.toEqual({ ok: false, error: "busy" });
       release();
       await expect(first).resolves.toMatchObject({ ok: true });
-      expect(f.solidtime.listTimeEntries).toHaveBeenCalledTimes(1);
+      expect(f.solidtime.listTimeEntriesWithRates).toHaveBeenCalledTimes(1);
     });
 
     it("solidtime と Calendar の同期は同時に動いてよい", async () => {
       let release: () => void = () => {};
-      f.solidtime.listTimeEntries.mockImplementationOnce(
+      f.solidtime.listTimeEntriesWithRates.mockImplementationOnce(
         () => new Promise((resolve) => (release = () => resolve([]))),
       );
       const first = app.syncSolidtime();
-      await vi.waitFor(() => expect(f.solidtime.listTimeEntries).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(f.solidtime.listTimeEntriesWithRates).toHaveBeenCalledTimes(1));
       await expect(app.syncCalendar()).resolves.toEqual({ ok: true });
       release();
       await first;
@@ -175,11 +177,11 @@ describe("createApp: ユースケース", () => {
 
     it("busy は失敗として記録しない", async () => {
       let release: () => void = () => {};
-      f.solidtime.listTimeEntries.mockImplementationOnce(
+      f.solidtime.listTimeEntriesWithRates.mockImplementationOnce(
         () => new Promise((resolve) => (release = () => resolve([]))),
       );
       const first = app.syncSolidtime();
-      await vi.waitFor(() => expect(f.solidtime.listTimeEntries).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(f.solidtime.listTimeEntriesWithRates).toHaveBeenCalledTimes(1));
       await app.syncSolidtime();
       release();
       await first;
@@ -235,7 +237,7 @@ describe("createApp: ユースケース", () => {
     });
 
     it("案件に結びついていない solidtime の稼働を返す(先月の初めから今日まで。請求に入らないので知らせる)", async () => {
-      f.solidtime.listTimeEntries.mockResolvedValueOnce([
+      f.solidtime.listTimeEntriesWithRates.mockResolvedValueOnce([
         stEntry("a", "X", "2026-11-10", HOUR),
         stEntry("b", "st-unknown", "2026-11-10", 2 * HOUR),
         stEntry("c", "st-unknown", "2026-10-01", HOUR),

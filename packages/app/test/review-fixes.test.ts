@@ -23,7 +23,7 @@ const stProject = (
   hourlyRate: 5_000,
   ...over,
 });
-const stEntry = (id: string, projectId: string | null, date: string, seconds: number) => ({
+const stEntry = (id: string, projectId: string | null, date: string, seconds: number, hourlyRate: number | null = 5000) => ({
   id,
   projectId,
   date,
@@ -32,6 +32,8 @@ const stEntry = (id: string, projectId: string | null, date: string, seconds: nu
   start: `${date}T00:00:00Z`,
   end: `${date}T01:00:00Z`,
   description: null,
+  userId: "user-me",
+  hourlyRate,
 });
 
 /** 直近 8 週の月曜 */
@@ -56,9 +58,9 @@ const fakes = () => ({
       stProject("st-free", { clientId: null }),
       stProject("st-norate", { hourlyRate: null }),
     ]),
-    listTimeEntries: vi.fn(async () => [
+    listTimeEntriesWithRates: vi.fn(async () => [
       ...mondays.map((d, i) => stEntry(`x${i}`, "st-x", d, 4 * HOUR)),
-      ...mondays.map((d, i) => stEntry(`o${i}`, "st-old", d, 2 * HOUR)),
+      ...mondays.map((d, i) => stEntry(`o${i}`, "st-old", d, 2 * HOUR, 6000)),
     ]),
   },
   calendar: { listOutOfOffice: vi.fn(async () => []) },
@@ -121,7 +123,7 @@ describe("レビューを受けて: 取引先の変更・契約のない稼働�
   });
 
   it("移った先の取引先の請求書ガイドに、その案件の稼働が出る(案件ごとのまとめ方は契約がなくてよい)", async () => {
-    f.solidtime.listTimeEntries.mockResolvedValue([stEntry("a", "st-x", "2026-11-10", 10 * HOUR)]);
+    f.solidtime.listTimeEntriesWithRates.mockResolvedValue([stEntry("a", "st-x", "2026-11-10", 10 * HOUR)]);
     await app.syncSolidtime();
     await repo.saveContract(contract);
     moveXToB();
@@ -131,7 +133,7 @@ describe("レビューを受けて: 取引先の変更・契約のない稼働�
   });
 
   it("契約のない案件の稼働も、案件ごとのまとめ方なら請求書ガイドに出し、ダッシュボードで知らせる", async () => {
-    f.solidtime.listTimeEntries.mockResolvedValue([stEntry("a", "st-x", "2026-11-10", 10 * HOUR)]);
+    f.solidtime.listTimeEntriesWithRates.mockResolvedValue([stEntry("a", "st-x", "2026-11-10", 10 * HOUR)]);
     await app.syncSolidtime();
     const guide = await app.invoiceGuide({ clientId: "st-client-a", month: "2026-11" });
     expect(guide?.lines).toEqual([{ item: "案件 st-x 2026年11月分", quantity: 10, unit: "時間", unitPrice: 5_000, amount: 50_000 }]);
@@ -140,7 +142,7 @@ describe("レビューを受けて: 取引先の変更・契約のない稼働�
   });
 
   it("契約ごとのまとめ方で契約のない稼働は、案件名の行で出して警告する", async () => {
-    f.solidtime.listTimeEntries.mockResolvedValue([stEntry("a", "st-x", "2026-11-10", 10 * HOUR)]);
+    f.solidtime.listTimeEntriesWithRates.mockResolvedValue([stEntry("a", "st-x", "2026-11-10", 10 * HOUR)]);
     await app.syncSolidtime();
     await app.updateClientBilling("st-client-a", {
       paymentTerms: { closingDay: "end", paymentMonthOffset: 1, paymentDay: "end" },
@@ -159,8 +161,8 @@ describe("レビューを受けて: 取引先の変更・契約のない稼働�
       stProject("st-old-free", { isArchived: true, clientId: null }),
       stProject("st-old-idle", { isArchived: true, hourlyRate: null }),
     ]);
-    f.solidtime.listTimeEntries.mockResolvedValue([
-      stEntry("a", "st-old-norate", "2026-11-10", HOUR),
+    f.solidtime.listTimeEntriesWithRates.mockResolvedValue([
+      stEntry("a", "st-old-norate", "2026-11-10", HOUR, null),
       stEntry("b", "st-old-free", "2026-10-20", HOUR),
       stEntry("c", "st-old-idle", "2026-09-10", HOUR),
     ]);

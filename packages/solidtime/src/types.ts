@@ -5,7 +5,6 @@ export interface SolidtimeClientOptions {
   readonly organizationId: string;
   readonly token: string;
   readonly timeZone: string;
-  readonly memberId?: string;
   /** Per-request timeout including response body reads, in milliseconds. Defaults to 30,000. */
   readonly timeoutMs?: number;
   readonly fetch?: typeof globalThis.fetch;
@@ -20,6 +19,7 @@ export interface ListTimeEntriesOptions {
 }
 
 export interface TimeEntry extends DailyWork {
+  readonly userId: string;
   readonly id: string;
   readonly projectId: string | null;
   readonly start: string;
@@ -28,8 +28,8 @@ export interface TimeEntry extends DailyWork {
   readonly billable: boolean;
 }
 
-export interface ProjectDailyWork extends DailyWork {
-  readonly projectId: string;
+export interface TimeEntryWithRate extends TimeEntry {
+  readonly hourlyRate: number | null;
 }
 
 export interface Client {
@@ -54,7 +54,7 @@ export interface Project {
 
 export interface SolidtimeClient {
   listTimeEntries(options: ListTimeEntriesOptions): Promise<TimeEntry[]>;
-  dailyWork(options: ListTimeEntriesOptions): Promise<ProjectDailyWork[]>;
+  listTimeEntriesWithRates(options: ListTimeEntriesOptions): Promise<TimeEntryWithRate[]>;
   listProjects(): Promise<Project[]>;
   listClients(): Promise<Client[]>;
   listProjectsWithRates(): Promise<Project[]>;
