@@ -7,7 +7,7 @@ API と Web は 1 つの Node.js プロセスで動く。Web のファイルは�
 ## 先に用意するもの
 
 - OIDC のクライアント。戻り先は公開 URL の `/auth/callback` にする。
-- solidtime の URL、組織 ID、personal access token。ほかのユーザーの打刻も読むため、トークンのユーザーには対象組織の admin か owner の権限が要る。打刻はユーザーで絞らず、案件ごとに取り込む。
+- solidtime の URL、組織 ID、personal access token。トークンのユーザーには、対象組織の全員の打刻を読める権限が必要。admin か owner がおすすめだが、solidtime の manager でも読める。打刻はユーザーで絞らず、案件ごとに取り込む。権限が足りないと、同期は失敗として記録される。
 - Google のサービスアカウントと、そのアカウントに共有したカレンダー・共有ドライブ。
 - 32 文字以上のランダムな `SESSION_SECRET`。再起動のたびに変えず、同じ値を使う。
 

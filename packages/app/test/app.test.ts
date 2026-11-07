@@ -59,6 +59,7 @@ const mondays = ["2026-11-09", "2026-11-02", "2026-10-26", "2026-10-19", "2026-1
 
 const fakes = () => ({
   solidtime: {
+    currentRates: vi.fn(async (pairs: readonly { projectId: string; userId: string }[]): Promise<(number | null)[]> => pairs.map(({ projectId }) => projectId === "Y" ? 7000 : 5000)),
     listTimeEntriesWithRates: vi.fn(async () => mondays.map((d, i) => stEntry(`e${i}`, "X", d, 4 * HOUR))),
     listClients: vi.fn(async () => [{ id: clientA.id, name: clientA.name, isArchived: false }]),
     listProjectsWithRates: vi.fn(async () => [projectX, projectY].map((p) => ({
@@ -139,11 +140,14 @@ describe("createApp: ユースケース", () => {
     });
   });
 
-  it.each(["listClients", "listProjectsWithRates", "listTimeEntriesWithRates"] as const)("%s が失敗してもカタログと打刻を保持し、次の同期は実行できる", async (method) => {
+  it.each(["listClients", "listProjectsWithRates", "listTimeEntriesWithRates", "currentRates"] as const)("%s が失敗してもカタログと打刻を保持し、次の同期は実行できる", async (method) => {
     await app.syncSolidtime();
     const catalog = await repo.listProjects({ includeArchived: true });
     f.solidtime[method].mockRejectedValueOnce(new Error("catalog unavailable"));
     await expect(app.syncSolidtime()).resolves.toEqual({ ok: false, error: "catalog unavailable" });
+    await expect(repo.getSyncStatus("solidtime")).resolves.toMatchObject({
+      lastFailure: { at: NOW.toISOString(), error: "catalog unavailable" },
+    });
     await expect(repo.listProjects({ includeArchived: true })).resolves.toEqual(catalog);
     await expect(repo.listDailyWork({ from: "2026-09-20", to: "2026-11-15" })).resolves.toHaveLength(8);
     await expect(app.syncSolidtime()).resolves.toMatchObject({ ok: true });

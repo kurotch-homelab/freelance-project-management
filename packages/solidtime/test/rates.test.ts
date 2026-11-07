@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createSolidtimeClient } from "../src/index.ts";
 import allMembersEntries from "./fixtures/time-entries-all-members.json" with { type: "json" };
 import members from "./fixtures/members.json" with { type: "json" };
@@ -220,5 +220,64 @@ describe("listTimeEntriesWithRates: members にいないユーザーの打刻", 
       orgRate: 900_000,
     });
     await expect(ratesOf()).resolves.toEqual({ e1: 5_000, e2: 9_000, e3: 5_000 });
+  });
+});
+
+describe("currentRates: 同期時点の単価", () => {
+  it("打刻を取得せず、入力順に案件ユーザー → 案件 → ユーザー → 組織の単価を返す", async () => {
+    serve({
+      projects: [project("A", 500_000), project("B", null)],
+      projectMembersOf: { A: [projectMember("A", MEMBER_1!.id, 0)] },
+      memberRates: { [MEMBER_1!.id]: 800_025 }, orgRate: 900_000,
+    });
+    const c = client();
+    await expect(c.currentRates([
+      { projectId: "B", userId: U2 }, { projectId: "A", userId: U1 },
+      { projectId: "A", userId: U2 }, { projectId: "B", userId: U1 },
+      { projectId: "A", userId: "removed" }, { projectId: "B", userId: "removed" },
+    ])).resolves.toEqual([9000, 0, 5000, 8000.25, 5000, 9000]);
+    expect(requested).toEqual([]);
+    server.resetHandlers();
+    serve({ projects: [project("B", null)] });
+    await expect(c.currentRates([{ projectId: "B", userId: U1 }])).resolves.toEqual([null]);
+  });
+
+  it.each([false, true])("打刻取得時の情報を再利用し、履歴にだけある案件のメンバーも一度だけ取得する(打刻なし: %s)", async (empty) => {
+    serve({
+      projects: [project("A", 500_000), project("B", null)],
+      entries: empty ? [] : [entry("e1", U1, "A"), entry("e2", U2, "A")],
+      projectMembersOf: { A: [projectMember("A", MEMBER_1!.id, 600_000)], B: [projectMember("B", MEMBER_2!.id, 700_025)] },
+      orgRate: 900_000,
+    });
+    const fetcher = vi.fn<typeof fetch>((input, init) => fetch(input, init));
+    const c = createSolidtimeClient({ baseUrl: BASE, organizationId: ORG, token: "test-token", timeZone: "Asia/Tokyo", fetch: fetcher });
+    const range = { from: "2026-11-01", to: "2026-11-30" };
+    await c.listTimeEntriesWithRates(range);
+    expect((await c.listProjectsWithRates()).map((p) => p.hourlyRate)).toEqual([5000, 9000]);
+    const pairs = [{ projectId: "B", userId: U2 }, { projectId: "A", userId: U1 }, { projectId: "B", userId: U2 }];
+    expect(await c.currentRates(pairs)).toEqual([7000.25, 6000, 7000.25]);
+    const paths = fetcher.mock.calls.map(([url]) => String(url).replace(API, ""));
+    expect(paths).toHaveLength(6);
+    expect(paths.filter((path) => !path.startsWith("/time-entries?")).sort()).toEqual([
+      "", "/members?page=1", "/projects?page=1", "/projects/A/project-members?page=1", "/projects/B/project-members?page=1",
+    ].sort());
+    // Even an empty next sync must refresh the shared information.
+    server.resetHandlers();
+    serve({ projects: [project("A", null), project("B", null)], memberRates: { [MEMBER_1!.id]: 800_025 }, orgRate: 400_000 });
+    await c.listTimeEntriesWithRates(range);
+    expect((await c.listProjectsWithRates()).map((p) => p.hourlyRate)).toEqual([4000, 4000]);
+    expect(await c.currentRates(pairs)).toEqual([4000, 8000.25, 4000]);
+  });
+
+  it("単価取得の失敗後は、次の同期で取り直す", async () => {
+    serve({ projects: [project("A", null)] });
+    server.use(http.get(`${API}/members`, () => HttpResponse.json({ message: "Forbidden" }, { status: 403 })));
+    const c = client();
+    const range = { from: "2026-11-01", to: "2026-11-30" };
+    await expect(c.listTimeEntriesWithRates(range)).rejects.toThrow();
+    server.resetHandlers();
+    serve({ projects: [project("A", 500_000)] });
+    await c.listTimeEntriesWithRates(range);
+    await expect(c.currentRates([{ projectId: "A", userId: U1 }])).resolves.toEqual([5000]);
   });
 });

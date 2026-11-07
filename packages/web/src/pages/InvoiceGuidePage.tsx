@@ -67,15 +67,19 @@ function GuideContent({ guide }: { guide: InvoiceGuide }) {
               <th scope="col">品目</th><th scope="col" className="numeric">数量</th><th scope="col">単位</th>
               <th scope="col" className="numeric">単価</th><th scope="col" className="numeric">金額</th>
             </tr></thead>
-            <tbody>{guide.lines.map((line, index) => (
-              <tr key={`${index}-${line.item}`}>
-                <th scope="row"><div className="copy-value"><span>{line.item}</span>{copyButton(`${line.item} の品目`, line.item)}</div></th>
-                <td className="numeric"><div className="copy-value"><span>{line.quantity}</span>{copyButton(`${line.item} の数量`, String(line.quantity))}</div></td>
-                <td><div className="copy-value"><span>{line.unit}</span>{copyButton(`${line.item} の単位`, line.unit)}</div></td>
-                <td className="numeric"><div className="copy-value"><span>{formatRate(line.unitPrice)}</span>{copyButton(`${line.item} の単価`, String(line.unitPrice))}</div></td>
-                <td className="numeric"><div className="copy-value"><span>{formatYen(line.amount)}</span>{copyButton(`${line.item} の金額`, String(line.amount))}</div></td>
-              </tr>
-            ))}</tbody>
+            <tbody>{guide.lines.map((line, index) => {
+              const sameItem = guide.lines.filter((other) => other.item === line.item).length > 1;
+              const label = sameItem ? `${line.item}・${formatRate(line.unitPrice)}` : line.item;
+              return (
+                <tr key={`${index}-${line.item}`}>
+                  <th scope="row"><div className="copy-value"><span>{line.item}</span>{copyButton(`${label} の品目`, line.item)}</div></th>
+                  <td className="numeric"><div className="copy-value"><span>{line.quantity}</span>{copyButton(`${label} の数量`, String(line.quantity))}</div></td>
+                  <td><div className="copy-value"><span>{line.unit}</span>{copyButton(`${label} の単位`, line.unit)}</div></td>
+                  <td className="numeric"><div className="copy-value"><span>{formatRate(line.unitPrice)}</span>{copyButton(`${label} の単価`, String(line.unitPrice))}</div></td>
+                  <td className="numeric"><div className="copy-value"><span>{formatYen(line.amount)}</span>{copyButton(`${label} の金額`, String(line.amount))}</div></td>
+                </tr>
+              );
+            })}</tbody>
           </table>
         </div>
       </div>

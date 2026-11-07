@@ -51,6 +51,7 @@ const contract: Contract = {
 
 const fakes = () => ({
   solidtime: {
+    currentRates: vi.fn(async (pairs: readonly { projectId: string; userId: string }[]): Promise<(number | null)[]> => pairs.map(({ projectId }) => projectId === "st-old" ? 6000 : ["st-norate", "recent"].includes(projectId) ? null : 5000)),
     listClients: vi.fn(async () => [stClient("st-client-a", "A 社")]),
     listProjectsWithRates: vi.fn(async () => [
       stProject("st-x"),
@@ -335,6 +336,7 @@ describe("solidtime を正として取り込む", () => {
 
   it.each(["project", "contract"] as const)("%s 単位で同じ案件の複数単価を分け、単価なしの実績だけを警告する", async (lineGrouping) => {
     f.solidtime.listProjectsWithRates.mockResolvedValue([stProject("st-x", { hourlyRate: 9999 })]);
+    f.solidtime.currentRates.mockResolvedValueOnce([6000.25]);
     f.solidtime.listTimeEntriesWithRates.mockResolvedValue([
       stEntry("missing", "st-x", "2026-11-01", HOUR, null),
       stEntry("a1", "st-x", "2026-11-10", 20, 4850.25),
@@ -361,8 +363,9 @@ describe("solidtime を正として取り込む", () => {
     expect(guide).toMatchObject(dashboard.months[0]!.clients[0]!.estimate);
   });
 
-  it.each(["project", "contract"] as const)("%s 単位で実績は打刻の単価、予測は直近の打刻の単価で計算する", async (lineGrouping) => {
+  it.each(["project", "contract"] as const)("%s 単位で実績は打刻の単価、予測は直近の打刻のユーザーの今の単価で計算する", async (lineGrouping) => {
     f.solidtime.listProjectsWithRates.mockResolvedValue([stProject("st-x", { hourlyRate: 9999 })]);
+    f.solidtime.currentRates.mockResolvedValueOnce([6000]);
     const entries = mondays.flatMap((date, i) => [
       stEntry(`me${i}`, "st-x", date, HOUR, 5000),
       { ...stEntry(`company${i}`, "st-x", date, HOUR, 6000), userId: "company", start: `${date}T02:00:00Z`, end: `${date}T03:00:00Z` },

@@ -200,7 +200,11 @@ export function invoiceGuide(input: InvoiceGuideInput): InvoiceGuide | null {
       amount: line.amount,
     })),
     note: client.lineGrouping === "contract"
-      ? entries.map((entry) => `${entry.item} の内訳: ${entry.breakdown}`).join("\n")
+      ? entries.map((entry) => {
+        const sameItem = entries.filter((other) => other.item === entry.item).length > 1;
+        const rate = sameItem ? `・${entry.hourlyRate.toLocaleString("ja-JP", { maximumFractionDigits: 2 })} 円` : "";
+        return `${entry.item}${rate} の内訳: ${entry.breakdown}`;
+      }).join("\n")
       : null,
     subtotal: summary.subtotal,
     tax: summary.tax,

@@ -113,48 +113,72 @@ export function createSolidtimeClient(options: SolidtimeClientOptions): Solidtim
     return results;
   }
 
+  async function loadProjectRates() {
+    const [projects, organizationRate] = await Promise.all([
+      listResources("projects", parseProject),
+      request(organizationPath, (body, status) => parseRate(dataOf(body, status), status)),
+    ]);
+    return { projects, organizationRate };
+  }
+
+  async function loadRateSnapshot() {
+    const [catalog, members] = await Promise.all([
+      loadProjectRates(),
+      listResources("members", (value, status) => {
+        assertResponse(isRecord(value) && typeof value.id === "string" && typeof value.user_id === "string", status, "member fields");
+        return { id: value.id, userId: value.user_id, rate: parseRate(value, status) };
+      }),
+    ]);
+    const projectsById = new Map(catalog.projects.map((project) => [project.id, project]));
+    const membersByUser = new Map(members.map((member) => [member.userId, member]));
+    const projectRates = new Map<string, Promise<Map<string, number | null>>>();
+    async function rate(projectId: string | null, userId: string): Promise<number | null> {
+      const member = membersByUser.get(userId);
+      let projectMemberRate: number | null | undefined;
+      if (projectId !== null && member) {
+        let pending = projectRates.get(projectId);
+        if (pending === undefined) {
+          pending = listResources(`projects/${encodeURIComponent(projectId)}/project-members`, (value, status) => {
+            assertResponse(isRecord(value) && typeof value.member_id === "string", status, "project member fields");
+            return { memberId: value.member_id, rate: parseRate(value, status) };
+          }).then((rows) => new Map(rows.map((row) => [row.memberId, row.rate])));
+          projectRates.set(projectId, pending);
+        }
+        projectMemberRate = (await pending).get(member.id);
+      }
+      const projectRate = projectId === null ? null : projectsById.get(projectId)?.hourlyRate;
+      // Former members skip both user-specific rates.
+      return projectMemberRate ?? projectRate ?? member?.rate ?? catalog.organizationRate;
+    }
+    return { ...catalog, rate };
+  }
+
+  let rateSnapshot: Awaited<ReturnType<typeof loadRateSnapshot>> | undefined;
   return {
     listTimeEntries,
     listProjects: () => listResources("projects", parseProject),
     listClients: () => listResources("clients", parseClient),
     async listProjectsWithRates() {
-      const [projects, organizationRate] = await Promise.all([
-        listResources("projects", parseProject),
-        request(organizationPath, (body, status) => parseRate(dataOf(body, status), status)),
-      ]);
+      const { projects, organizationRate } = rateSnapshot ?? await loadProjectRates();
       return projects.map((project) => ({ ...project, hourlyRate: project.hourlyRate ?? organizationRate }));
     },
     async listTimeEntriesWithRates(range) {
+      // Every sync starts afresh, even after an empty or failed previous sync.
+      rateSnapshot = undefined;
       const entries = await listTimeEntries(range);
-      if (entries.length === 0) return [];
-      const [projects, members, organizationRate] = await Promise.all([
-        listResources("projects", parseProject),
-        listResources("members", (value, status) => {
-          assertResponse(isRecord(value) && typeof value.id === "string" && typeof value.user_id === "string", status, "member fields");
-          return { id: value.id, userId: value.user_id, rate: parseRate(value, status) };
-        }),
-        request(organizationPath, (body, status) => parseRate(dataOf(body, status), status)),
-      ]);
-      const projectsById = new Map(projects.map((project) => [project.id, project]));
-      const membersByUser = new Map(members.map((member) => [member.userId, member]));
-      const projectRates = new Map<string, Map<string, number | null>>();
-      // Only projects with completed entries need their member rates, including every page.
-      for (const projectId of new Set(entries.flatMap((entry) => entry.projectId === null ? [] : [entry.projectId]))) {
-        const projectMembers = await listResources(`projects/${encodeURIComponent(projectId)}/project-members`, (value, status) => {
-          assertResponse(isRecord(value) && typeof value.member_id === "string", status, "project member fields");
-          return { memberId: value.member_id, rate: parseRate(value, status) };
-        });
-        projectRates.set(projectId, new Map(projectMembers.map((member) => [member.memberId, member.rate])));
-      }
-      return entries.map((entry) => {
-        const member = membersByUser.get(entry.userId);
-        // Former members' entries fall back to project and organization rates.
-        const projectMemberRate = entry.projectId !== null && member
-          ? projectRates.get(entry.projectId)?.get(member.id)
-          : null;
-        const projectRate = entry.projectId === null ? null : projectsById.get(entry.projectId)?.hourlyRate;
-        return { ...entry, hourlyRate: projectMemberRate ?? projectRate ?? member?.rate ?? organizationRate };
-      });
+      const snapshot = await loadRateSnapshot();
+      const ratedEntries = await Promise.all(entries.map(async (entry) => ({
+        ...entry, hourlyRate: await snapshot.rate(entry.projectId, entry.userId),
+      })));
+      rateSnapshot = snapshot;
+      return ratedEntries;
+    },
+    async currentRates(pairs) {
+      const snapshot = rateSnapshot;
+      rateSnapshot = undefined;
+      if (pairs.length === 0) return [];
+      const rates = snapshot ?? await loadRateSnapshot();
+      return Promise.all(pairs.map(({ projectId, userId }) => rates.rate(projectId, userId)));
     },
   };
 }

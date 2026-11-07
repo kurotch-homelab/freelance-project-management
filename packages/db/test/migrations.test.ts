@@ -63,8 +63,8 @@ describe.each(backends)("マイグレーションのトランザクション (%s
     await sql`insert into projects (id, client_id, name, archived, hourly_rate) values ('x', 'a', 'X', 0, 5000)`.execute(db);
     await sql`insert into time_entries (id, solidtime_project_id, date, seconds, billable, start_at)
       values ('e', 'x', '2026-11-01', 3600, 1, '2026-11-01T00:00:00Z')`.execute(db);
-    await migrateToLatest(db);
-    await migrateToLatest(db);
+    expect((await migrator.migrateTo("003_time_entry_rates")).error).toBeUndefined();
+    expect((await migrator.migrateTo("003_time_entry_rates")).error).toBeUndefined();
     expect(await db.selectFrom("time_entries").select(["id", "hourly_rate", "start_at"]).execute())
       .toEqual([{ id: "e", hourly_rate: null, start_at: "2026-11-01T00:00:00Z" }]);
     expect(await db.selectFrom("projects").select(["id", "hourly_rate"]).execute())
@@ -73,8 +73,26 @@ describe.each(backends)("マイグレーションのトランザクション (%s
     expect((await db.selectFrom("time_entries").select("hourly_rate").executeTakeFirst())?.hourly_rate).toBe(6000.25);
     await expect(db.updateTable("time_entries").set({ hourly_rate: -1 }).execute()).rejects.toThrow();
     expect((await migrator.migrateDown()).error).toBeUndefined();
-    await migrateToLatest(db);
+    expect((await migrator.migrateTo("003_time_entry_rates")).error).toBeUndefined();
     expect(await db.selectFrom("time_entries").select(["id", "hourly_rate"]).execute()).toEqual([{ id: "e", hourly_rate: null }]);
+  });
+
+  it("003 のあとに 004 を適用し、打刻と請求単価を残したまま user_id を追加する", async () => {
+    const migrator = new Migrator({ db, provider: migrationProvider });
+    expect((await migrator.migrateTo("003_time_entry_rates")).error).toBeUndefined();
+    await sql`insert into time_entries (id, solidtime_project_id, date, seconds, billable, start_at, hourly_rate)
+      values ('e', 'x', '2026-08-01', 3600, 1, '2026-08-01T00:00:00Z', 5000.25)`.execute(db);
+    await migrateToLatest(db);
+    await migrateToLatest(db);
+    const saved = await db.selectFrom("time_entries").selectAll().executeTakeFirstOrThrow();
+    expect(saved).toMatchObject({ id: "e", user_id: null, hourly_rate: 5000.25, start_at: "2026-08-01T00:00:00Z" });
+    await db.updateTable("time_entries").set({ user_id: "company-user" }).execute();
+    expect((await db.selectFrom("time_entries").select("user_id").executeTakeFirst())?.user_id).toBe("company-user");
+    expect((await migrator.migrateDown()).error).toBeUndefined();
+    expect((await db.introspection.getTables()).find((table) => table.name === "time_entries")?.columns.map((c) => c.name))
+      .not.toContain("user_id");
+    await migrateToLatest(db);
+    expect(await db.selectFrom("time_entries").selectAll().executeTakeFirst()).toEqual(saved);
   });
 
   it.each(["exception", "sql"] as const)("途中の %s エラーはその 1 件だけを戻し、修正後に再実行できる", async (failure) => {

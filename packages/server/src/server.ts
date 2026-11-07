@@ -56,6 +56,7 @@ export async function buildServer(config: Config, deps: ServerDeps = {}) {
         listClients: () => solidtime.listClients(),
         listProjectsWithRates: () => solidtime.listProjectsWithRates(),
         listTimeEntriesWithRates: (period) => solidtime.listTimeEntriesWithRates(period),
+        currentRates: (pairs) => solidtime.currentRates(pairs),
       },
       calendar, drive, clock: d.clock,
       config: {

@@ -43,6 +43,8 @@ export interface HoursRangeOverrideFilter {
 
 export interface TimeEntryRecord extends RatedDailyWork {
   readonly id: string;
+  /** Absent on entries saved before migration 004, until they are synced again. */
+  readonly userId?: string | null;
   readonly solidtimeProjectId: string | null;
   readonly billable: boolean;
   readonly start?: string;
@@ -80,6 +82,8 @@ export interface SolidtimeCatalog {
 }
 
 export interface Repository {
+  /** Latest billable users after replacing period with entries, without writing yet. */
+  listLatestBillableUsers(period: DateRange, entries: readonly TimeEntryRecord[]): Promise<{ projectId: string; userId: string | null }[]>;
   syncSolidtimeCatalog(catalog: SolidtimeCatalog): Promise<void>;
   replaceSolidtimeData(catalog: SolidtimeCatalog, period: DateRange, entries: readonly TimeEntryRecord[]): Promise<void>;
   updateClientBilling(id: string, billing: ClientBilling): Promise<void>;

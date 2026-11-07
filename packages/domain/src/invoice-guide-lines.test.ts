@@ -72,3 +72,20 @@ it.each(["project", "contract"] as const)("%s 単位でも打刻の単価ごと�
     warnings: [{ kind: "missingRate", projectId: "X", projectName: "案件 X", seconds: 3600 }],
   });
 });
+
+describe("invoiceGuide: 同じ案件で単価の違う行", () => {
+  it("契約ごとのまとめ方で品目名が同じになるときは、備考の内訳に単価を書いて見分けられるようにする", () => {
+    const result = invoiceGuide({
+      month: "2026-11",
+      client: client("contract"),
+      contracts: [{ id: "c1", clientId: "client-a", name: "業務委託契約", start: "2026-01-01", end: null, projectIds: ["X"], renewalOutlook: "undecided" }],
+      projects: [{ ...X, work: [
+        { date: "2026-11-10", seconds: HOUR, hourlyRate: 5_000 },
+        { date: "2026-11-11", seconds: 2 * HOUR, hourlyRate: 6_000 },
+      ] }],
+    });
+    expect(result?.lines.map((l) => [l.unitPrice, l.quantity])).toEqual([[5_000, 1], [6_000, 2]]);
+    expect(result?.note).toContain("5,000 円");
+    expect(result?.note).toContain("6,000 円");
+  });
+});

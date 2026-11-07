@@ -180,9 +180,9 @@ describe("buildServer", () => {
     expect(await repo.getSyncStatus("calendar")).toEqual({ lastSuccessAt: deps.clock.now().toISOString(), lastFailure: null });
     const solidtime = deps.createSolidtimeClient.mock.results[0]!.value;
     const calendar = deps.createCalendarClient.mock.results[0]!.value;
-    expect(solidtime.listClients.mock.invocationCallOrder[0]).toBeLessThan(solidtime.listProjectsWithRates.mock.invocationCallOrder[0]!);
-    expect(solidtime.listProjectsWithRates.mock.invocationCallOrder[0]).toBeLessThan(solidtime.listTimeEntriesWithRates.mock.invocationCallOrder[0]!);
-    expect(solidtime.listTimeEntriesWithRates.mock.invocationCallOrder[0]).toBeLessThan(calendar.listOutOfOffice.mock.invocationCallOrder[0]!);
+    expect(solidtime.listClients.mock.invocationCallOrder[0]).toBeLessThan(solidtime.listTimeEntriesWithRates.mock.invocationCallOrder[0]!);
+    expect(solidtime.listTimeEntriesWithRates.mock.invocationCallOrder[0]).toBeLessThan(solidtime.listProjectsWithRates.mock.invocationCallOrder[0]!);
+    expect(solidtime.listProjectsWithRates.mock.invocationCallOrder[0]).toBeLessThan(calendar.listOutOfOffice.mock.invocationCallOrder[0]!);
   });
 
   it("logs failed syncs without secrets and continues with calendar", async () => {

@@ -197,9 +197,19 @@ const timeEntryRates: Migration = {
   },
 };
 
+const timeEntryUsers: Migration = {
+  async up(db) {
+    // Old entries keep their billing rates; user IDs are filled by the next sync.
+    await db.schema.alterTable("time_entries").addColumn("user_id", "text").execute();
+  },
+  async down(db) {
+    await db.schema.alterTable("time_entries").dropColumn("user_id").execute();
+  },
+};
+
 export const migrationProvider: MigrationProvider = {
   async getMigrations() {
-    return { "001_initial_schema": initialSchema, "002_solidtime_source": solidtimeSourceSchema, "003_time_entry_rates": timeEntryRates };
+    return { "001_initial_schema": initialSchema, "002_solidtime_source": solidtimeSourceSchema, "003_time_entry_rates": timeEntryRates, "004_time_entry_users": timeEntryUsers };
   },
 };
 

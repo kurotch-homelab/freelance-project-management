@@ -54,7 +54,10 @@ export interface Project {
 
 export interface SolidtimeClient {
   listTimeEntries(options: ListTimeEntriesOptions): Promise<TimeEntry[]>;
+  /** Starts a fresh rate snapshot, shared with listProjectsWithRates and the next currentRates call. */
   listTimeEntriesWithRates(options: ListTimeEntriesOptions): Promise<TimeEntryWithRate[]>;
+  /** Uses and releases the time-entry rate snapshot, or fetches fresh rates when called on its own. */
+  currentRates(pairs: readonly { projectId: string; userId: string }[]): Promise<(number | null)[]>;
   listProjects(): Promise<Project[]>;
   listClients(): Promise<Client[]>;
   listProjectsWithRates(): Promise<Project[]>;

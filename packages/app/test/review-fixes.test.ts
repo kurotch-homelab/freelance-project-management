@@ -51,6 +51,7 @@ const contract: Contract = {
 
 const fakes = () => ({
   solidtime: {
+    currentRates: vi.fn(async (pairs: readonly { projectId: string; userId: string }[]): Promise<(number | null)[]> => pairs.map(({ projectId }) => projectId === "st-old" ? 6000 : projectId.includes("norate") ? null : 5000)),
     listClients: vi.fn(async () => [stClient("st-client-a", "A 社")]),
     listProjectsWithRates: vi.fn(async () => [
       stProject("st-x"),

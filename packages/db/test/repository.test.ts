@@ -290,22 +290,45 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
       ]);
     });
 
-    it.each([null, 0])("今の単価は開始時刻が最新の billable な打刻。%s もそのまま使い、削除後は残った打刻から選ぶ", async (latestRate) => {
+    it("同期後に残る全期間の billable な打刻から、開始時刻が最新のユーザーを選ぶ", async () => {
       const catalog = { clients: [clientA], projects: [projectX, projectY] };
       const period = { from: "2026-11-01", to: "2026-11-30" };
-      const older = { ...entry("older", "2026-11-02", 3600), start: "2026-11-02T10:00:00+09:00", hourlyRate: 6000.25 };
-      const newer = { ...entry("newer", "2026-11-02", 3600), start: "2026-11-02T02:00:00Z", hourlyRate: latestRate };
-      await repo.replaceSolidtimeData(catalog, period, [
-        newer, older, { ...entry("nonbillable", "2026-11-03", 3600, false), start: "2026-11-03T00:00:00Z", hourlyRate: 9999 },
+      const december = { from: "2026-12-01", to: "2026-12-31" };
+      const older = { ...entry("older", "2026-11-02", 3600), userId: "user-old", start: "2026-11-02T10:00:00+09:00", hourlyRate: 6000.25 };
+      const newer = { ...entry("newer", "2026-11-02", 3600), userId: "user-new", start: "2026-11-02T02:00:00Z", hourlyRate: null };
+      const entries = [newer, older,
+        { ...entry("nonbillable", "2026-11-03", 3600, false), userId: "user-other", start: "2026-11-03T00:00:00Z" },
+      ];
+      expect(await repo.listLatestBillableUsers(period, entries)).toEqual([{ projectId: "X", userId: "user-new" }]);
+      await repo.replaceSolidtimeData(catalog, period, entries);
+      expect(await repo.listLatestBillableUsers(december, [])).toEqual([{ projectId: "X", userId: "user-new" }]);
+      // Replacing November removes its saved latest entry before choosing the user.
+      expect(await repo.listLatestBillableUsers(period, [older])).toEqual([{ projectId: "X", userId: "user-old" }]);
+      expect(await repo.listLatestBillableUsers(period, [])).toEqual([]);
+      // Selecting a user does not write either project rates or time entries.
+      expect((await repo.listProjects()).map((p) => p.hourlyRate)).toEqual([5000, 7000]);
+      expect(await repo.listLatestBillableUsers(december, [])).toEqual([{ projectId: "X", userId: "user-new" }]);
+    });
+
+    it("直近の打刻に userId がなければ、古い打刻のユーザーを代わりに使わない", async () => {
+      const period = { from: "2026-11-01", to: "2026-11-30" };
+      await repo.replaceTimeEntries(period, [
+        { ...entry("known", "2026-11-01", 3600), userId: "user-old", start: "2026-11-01T00:00:00Z" },
+        { ...entry("legacy", "2026-11-02", 3600), start: "2026-11-02T00:00:00Z" },
       ]);
-      expect((await repo.listProjects()).map((p) => [p.id, p.hourlyRate])).toEqual([["X", latestRate], ["Y", 7000]]);
-      await repo.replaceSolidtimeData(catalog, period, [older]);
-      expect((await repo.listProjects())[0]?.hourlyRate).toBe(6000.25);
-      // A sync of a later month must still use the saved latest entry.
-      await repo.replaceSolidtimeData(catalog, { from: "2026-12-01", to: "2026-12-31" }, []);
-      expect((await repo.listProjects())[0]?.hourlyRate).toBe(6000.25);
+      expect(await repo.listLatestBillableUsers({ from: "2026-12-01", to: "2026-12-31" }, []))
+        .toEqual([{ projectId: "X", userId: null }]);
+    });
+
+    it.each([null, 0, 7000.25])("案件の現在単価 %s はカタログの値を保存し、過去の打刻単価では上書きしない", async (hourlyRate) => {
+      const period = { from: "2026-11-01", to: "2026-11-30" };
+      const catalog = { clients: [clientA], projects: [{ ...projectX, hourlyRate }] };
+      const work = { ...entry("old", "2026-10-01", 3600), userId: "user-old", start: "2026-10-01T00:00:00Z" };
+      await repo.replaceTimeEntries({ from: "2026-10-01", to: "2026-10-31" }, [work]);
       await repo.replaceSolidtimeData(catalog, period, []);
-      expect((await repo.listProjects())[0]?.hourlyRate).toBe(5000);
+      expect((await repo.listProjects())[0]?.hourlyRate).toBe(hourlyRate);
+      expect(await repo.listDailyWork({ from: "2026-10-01", to: "2026-10-31" }))
+        .toEqual([{ projectId: "X", date: "2026-10-01", seconds: 3600, hourlyRate: 5000 }]);
     });
 
     it.each([-1, NaN, Infinity, 5000.001])("不正な打刻単価 %s では前の打刻とカタログを残す", async (hourlyRate) => {

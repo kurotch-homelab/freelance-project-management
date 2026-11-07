@@ -21,7 +21,7 @@ import { addDays, dateInTimeZone, forecastPeriods, monthPeriod } from "./dates.t
 
 export interface AppDeps {
   readonly repo: Repository;
-  readonly solidtime: Pick<SolidtimeClient, "listTimeEntriesWithRates" | "listClients" | "listProjectsWithRates">;
+  readonly solidtime: Pick<SolidtimeClient, "listTimeEntriesWithRates" | "listClients" | "listProjectsWithRates" | "currentRates">;
   readonly calendar: Pick<CalendarClient, "listOutOfOffice">;
   readonly drive: Pick<DriveClient, "ensureFolder" | "uploadFile" | "listFiles">;
   readonly clock: { now(): Date };
@@ -93,15 +93,11 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
         const start = historyStart(asOf);
         const period = { from: start < previousMonthStart ? start : previousMonthStart, to: asOf };
         const clients = await solidtime.listClients();
-        const projects = await solidtime.listProjectsWithRates();
         const entries = await solidtime.listTimeEntriesWithRates(period);
-        await repo.replaceSolidtimeData({
-          clients: clients.map(({ id, name, isArchived }) => ({ id, name, archived: isArchived })),
-          projects: projects.map(({ id, clientId, name, isArchived, hourlyRate }) => ({
-            id, clientId, name, archived: isArchived, hourlyRate,
-          })),
-        }, period, entries.filter((entry) => entry.date >= period.from && entry.date <= period.to).map((entry) => ({
+        const projects = await solidtime.listProjectsWithRates();
+        const savedEntries = entries.filter((entry) => entry.date >= period.from && entry.date <= period.to).map((entry) => ({
           id: entry.id,
+          userId: entry.userId,
           solidtimeProjectId: entry.projectId,
           date: entry.date,
           seconds: entry.seconds,
@@ -109,7 +105,20 @@ export function createApp({ repo, solidtime, calendar, drive, clock, config }: A
           billable: entry.billable,
           start: entry.start,
           end: entry.end,
-        })));
+        }));
+        const projectIds = new Set(projects.map((project) => project.id));
+        const pairs = (await repo.listLatestBillableUsers(period, savedEntries))
+          .filter((pair): pair is { projectId: string; userId: string } => pair.userId !== null && projectIds.has(pair.projectId));
+        const rates = await solidtime.currentRates(pairs);
+        if (rates.length !== pairs.length) throw new Error("solidtime の単価の件数が一致しません");
+        const currentRates = new Map(pairs.map((pair, index) => [pair.projectId, rates[index]!]));
+        await repo.replaceSolidtimeData({
+          clients: clients.map(({ id, name, isArchived }) => ({ id, name, archived: isArchived })),
+          projects: projects.map(({ id, clientId, name, isArchived, hourlyRate }) => ({
+            id, clientId, name, archived: isArchived,
+            hourlyRate: currentRates.has(id) ? currentRates.get(id)! : hourlyRate,
+          })),
+        }, period, savedEntries);
         return { unlinked: await repo.listUnlinkedSolidtimeProjects(period) };
       });
     },

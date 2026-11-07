@@ -162,19 +162,30 @@ export function createRepository(db: Database): Repository {
         const repo = createRepository(tx);
         await repo.syncSolidtimeCatalog(catalog);
         await repo.replaceTimeEntries(period, entries);
-        // Compare instants, since ISO strings may use different UTC offsets.
-        // Include history outside this sync window, and preserve a latest null rate.
-        const saved = await tx.selectFrom("time_entries").select(["id", "solidtime_project_id", "start_at", "hourly_rate"])
-          .where("billable", "=", 1).where("start_at", "is not", null).execute();
-        saved.sort((a, b) => Date.parse(b.start_at!) - Date.parse(a.start_at!) || compare(a.id, b.id));
-        const updated = new Set<string>();
-        for (const entry of saved) {
-          const id = entry.solidtime_project_id;
-          if (id === null || updated.has(id)) continue;
-          updated.add(id);
-          await tx.updateTable("projects").set({ hourly_rate: entry.hourly_rate }).where("id", "=", id).execute();
-        }
       });
+    },
+    async listLatestBillableUsers(period, entries) {
+      assertPeriod(period);
+      const saved = await db.selectFrom("time_entries")
+        .select(["id", "solidtime_project_id", "user_id", "start_at"])
+        .where("billable", "=", 1).where("start_at", "is not", null)
+        .where((eb) => eb.or([eb("date", "<", period.from), eb("date", ">", period.to)]))
+        .execute();
+      for (const entry of entries) {
+        assertWithinPeriod(entry.date, period);
+        if (entry.start === undefined || !entry.billable) continue;
+        assertTimestamp(entry.start);
+        saved.push({ id: entry.id, solidtime_project_id: entry.solidtimeProjectId,
+          user_id: entry.userId ?? null, start_at: entry.start });
+      }
+      // Compare instants, since ISO strings may use different UTC offsets.
+      saved.sort((a, b) => Date.parse(b.start_at!) - Date.parse(a.start_at!) || compare(a.id, b.id));
+      const users = new Map<string, string | null>();
+      for (const entry of saved) {
+        const id = entry.solidtime_project_id;
+        if (id !== null && !users.has(id)) users.set(id, entry.user_id);
+      }
+      return Array.from(users, ([projectId, userId]) => ({ projectId, userId }));
     },
     async updateClientBilling(id, billing) {
       validateClientBilling(billing);
@@ -299,7 +310,7 @@ export function createRepository(db: Database): Repository {
         if (entry.start !== undefined) assertTimestamp(entry.start);
         if (entry.end !== undefined) assertTimestamp(entry.end);
         return {
-          id: entry.id, solidtime_project_id: entry.solidtimeProjectId, date: entry.date,
+          id: entry.id, solidtime_project_id: entry.solidtimeProjectId, user_id: entry.userId ?? null, date: entry.date,
           seconds: entry.seconds, hourly_rate: entry.hourlyRate, billable: Number(entry.billable),
           start_at: entry.start ?? null, end_at: entry.end ?? null,
         };
