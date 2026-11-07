@@ -34,6 +34,8 @@ export interface HoursRangeOverrideRecord extends HoursRangeOverride {
   readonly projectId: string | null;
 }
 
+export type HoursRangeOverrideKey = Pick<HoursRangeOverrideRecord, "contractId" | "projectId" | "month">;
+
 export interface HoursRangeOverrideFilter {
   readonly month?: string;
   readonly contractId?: string;
@@ -89,6 +91,7 @@ export interface Repository {
   saveContract(contract: Contract): Promise<void>;
   listContracts(filter?: ClientFilter): Promise<Contract[]>;
   saveHoursRangeOverride(override: HoursRangeOverrideRecord): Promise<void>;
+  deleteHoursRangeOverride(key: HoursRangeOverrideKey): Promise<boolean>;
   listHoursRangeOverrides(filter?: HoursRangeOverrideFilter): Promise<HoursRangeOverrideRecord[]>;
   replaceTimeEntries(period: DateRange, entries: readonly TimeEntryRecord[]): Promise<void>;
   listDailyWork(period: DateRange): Promise<ProjectDailyWork[]>;

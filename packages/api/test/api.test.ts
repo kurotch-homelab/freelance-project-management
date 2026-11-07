@@ -128,6 +128,23 @@ describe("createApi: HTTP API", () => {
       await expect((await api.request("/api/hours-range-overrides?month=2026-12")).json()).resolves.toEqual([override]);
     });
 
+    it("上書きは契約と月を併用して絞れる", async () => {
+      await api.request("/api/contracts/c1", { ...json({ ...contract1, end: "2026-12-31" }), method: "PUT" });
+      await api.request("/api/contracts/c2", { ...json({ ...contract1, id: "c2", start: "2027-01-01" }), method: "PUT" });
+      const override = { contractId: "c1", projectId: null, month: "2026-12", range: { maxHours: 0 }, note: "" };
+      for (const row of [override, { ...override, month: "2026-11" }, { ...override, contractId: "c2" }]) {
+        expect((await api.request("/api/hours-range-overrides", json(row))).status).toBe(200);
+      }
+      await expect((await api.request("/api/hours-range-overrides?contractId=c1&month=2026-12")).json()).resolves.toEqual([override]);
+      expect((await api.request("/api/hours-range-overrides?contractId=c1&month=2026-13")).status).toBe(400);
+    });
+
+    it.each(["month=2026-12", "contractId=c1", "contractId=c1&month=2026-00", "contractId=c1&month=2026-13"])(
+      "上書きの削除に必須の契約・月が不正なら 400: %s", async (query) => {
+        expect((await api.request(`/api/hours-range-overrides?${query}`, { method: "DELETE" })).status).toBe(400);
+      },
+    );
+
     it("請求設定では名前・アーカイブ・Drive の値を送っても変更しない", async () => {
       const res = await api.request("/api/clients/client-a/billing", { ...json({
         ...clientA, name: "変更不可", archived: true, driveFolderId: "変更不可",

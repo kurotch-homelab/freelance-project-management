@@ -142,6 +142,27 @@ describe("listTimeEntriesWithRates: 全ユーザーの打刻と、打刻ごと�
     );
     await expect(ratesOf()).resolves.toEqual({ e1: 6_000.25 });
   });
+
+  it("project members は、打刻のある案件ごとに各ページを 1 回ずつ引く(ユーザーや打刻が多くても増えない)", async () => {
+    serve({
+      projects: [project("A", 500_000)],
+      entries: [entry("e1", U1, "A"), entry("e2", U2, "A"), entry("e3", U1, "A")],
+    });
+    const pages: number[] = [];
+    server.use(
+      http.get(`${API}/projects/A/project-members`, ({ request }) => {
+        const page = Number(new URL(request.url).searchParams.get("page"));
+        pages.push(page);
+        return HttpResponse.json({
+          ...projectMembers,
+          data: [page === 1 ? projectMember("A", MEMBER_2!.id, 700_000) : projectMember("A", MEMBER_1!.id, 600_000)],
+          meta: { ...projectMembers.meta, current_page: page, last_page: 2, total: 2 },
+        });
+      }),
+    );
+    await expect(ratesOf()).resolves.toEqual({ e1: 6_000, e2: 7_000, e3: 6_000 });
+    expect(pages).toEqual([1, 2]);
+  });
 });
 
 describe("listProjectsWithRates: 案件の単価(ユーザーによらない。案件 → 組織)", () => {

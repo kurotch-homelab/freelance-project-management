@@ -1,5 +1,5 @@
 import type { createApp } from "@fpm/app";
-import type { ClientBilling, ClientRecord, ProjectRecord } from "@fpm/db";
+import type { ClientBilling, ClientRecord, ProjectRecord, HoursRangeOverrideFilter, HoursRangeOverrideKey, HoursRangeOverrideRecord } from "@fpm/db";
 import type { Contract, InvoiceGuide } from "@fpm/domain";
 
 export type Dashboard = Awaited<ReturnType<ReturnType<typeof createApp>["dashboard"]>>;
@@ -7,6 +7,7 @@ export type SyncSource = keyof Dashboard["sync"];
 export type Client = ClientRecord;
 export type Project = ProjectRecord;
 export type { Contract } from "@fpm/domain";
+export type { HoursRangeOverrideKey, HoursRangeOverrideRecord } from "@fpm/db";
 export type SyncResult =
   | { readonly kind: "ok" }
   | { readonly kind: "busy" }
@@ -19,6 +20,9 @@ export interface ApiClient {
   listContracts(clientId?: string): Promise<readonly Contract[]>;
   saveClientBilling(id: string, billing: ClientBilling): Promise<void>;
   saveContract(contract: Contract): Promise<void>;
+  listHoursRangeOverrides(filter?: HoursRangeOverrideFilter): Promise<readonly HoursRangeOverrideRecord[]>;
+  saveHoursRangeOverride(override: HoursRangeOverrideRecord): Promise<void>;
+  deleteHoursRangeOverride(key: HoursRangeOverrideKey): Promise<void>;
   invoiceGuide(query: { clientId: string; month: string }): Promise<InvoiceGuide | null>;
   sync(source: SyncSource): Promise<SyncResult>;
 }
@@ -79,6 +83,23 @@ export function createApiClient({ fetch: fetcher = globalThis.fetch }: { fetch?:
       });
     },
     async saveContract(contract) { await save<{ ok: true }>("contracts", contract); },
+    listHoursRangeOverrides: (filter = {}) => {
+      const params = new URLSearchParams();
+      if (filter.contractId !== undefined) params.set("contractId", filter.contractId);
+      if (filter.month !== undefined) params.set("month", filter.month);
+      return request(`/api/hours-range-overrides${params.size ? `?${params}` : ""}`);
+    },
+    async saveHoursRangeOverride(override) {
+      await request("/api/hours-range-overrides", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(override),
+      });
+    },
+    async deleteHoursRangeOverride({ contractId, projectId, month }) {
+      const params = new URLSearchParams({ contractId });
+      if (projectId !== null) params.set("projectId", projectId);
+      params.set("month", month);
+      await request(`/api/hours-range-overrides?${params}`, { method: "DELETE" });
+    },
     async invoiceGuide(query) {
       const params = new URLSearchParams(query);
       const body = await request<{ guide: InvoiceGuide | null }>(`/api/invoice-guide?${params}`);

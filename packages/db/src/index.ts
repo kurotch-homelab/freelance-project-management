@@ -5,6 +5,6 @@ export { createRepository } from "./repository.ts";
 export type { Schema } from "./schema.ts";
 export type {
   ClientBilling, SolidtimeCatalog, Absences, ClientFilter, ClientRecord, DateRange, HoursRangeOverrideFilter,
-  HoursRangeOverrideRecord, ProjectDailyWork, ProjectRecord, Repository,
+  HoursRangeOverrideKey, HoursRangeOverrideRecord, ProjectDailyWork, ProjectRecord, Repository,
   SyncRecord, SyncSource, SyncStatus, TimeEntryRecord, UnlinkedSolidtimeProject,
 } from "./types.ts";

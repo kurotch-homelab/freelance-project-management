@@ -34,6 +34,14 @@ export function assertHoursRange({ minHours, maxHours }: HoursRange): void {
   }
 }
 
+export function assertHoursRangeOverride(override: HoursRangeOverride): void {
+  parseDate(`${override.month}-01`, "override.month");
+  assertHoursRange(override.range);
+  if (override.range.minHours === undefined && override.range.maxHours === undefined) {
+    throw new RangeError("Override range must have minHours or maxHours");
+  }
+}
+
 /** 月ごとの上書きがあれば、その範囲全体を契約の目安時間より優先する。 */
 export function effectiveHoursRange(
   contractRange: HoursRange,
@@ -46,8 +54,7 @@ export function effectiveHoursRange(
   const months = new Set<string>();
   let range = contractRange;
   for (const override of overrides) {
-    parseDate(`${override.month}-01`, "override.month");
-    assertHoursRange(override.range);
+    assertHoursRangeOverride(override);
     if (months.has(override.month)) {
       throw new RangeError(`duplicate hours range override for month: ${override.month}`);
     }

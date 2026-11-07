@@ -29,6 +29,7 @@ body { margin: 0; }
 .project-choices legend { padding: 0 4px; font-weight: var(--f-weight-medium); }
 .project-choice { display: grid; gap: 12px; }
 .project-choice .f-check { overflow-wrap: anywhere; }
+.override-note { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 160px; max-width: 320px; }
 .f-react .table-frame .master-table { min-width: 720px; }
 .master-table tbody th { white-space: normal; min-width: 160px; overflow-wrap: anywhere; }
 .muted { color: var(--f-muted); }

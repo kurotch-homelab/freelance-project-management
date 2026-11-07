@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { effectiveHoursRange, validateContracts, validateClientBilling, type Contract, type HoursRange } from "@fpm/domain";
+import { assertHoursRangeOverride, validateContracts, validateClientBilling, type Contract, type HoursRange } from "@fpm/domain";
 import type { Selectable } from "kysely";
 import type { Database } from "./database.ts";
 import type { ClientsTable, ProjectsTable, StoredInteger } from "./schema.ts";
@@ -248,7 +248,7 @@ export function createRepository(db: Database): Repository {
     },
     async saveHoursRangeOverride(override) {
       await transaction(async (tx) => {
-        effectiveHoursRange({}, [override], override.month);
+        assertHoursRangeOverride(override);
         const row = {
           id: JSON.stringify([override.contractId, override.projectId, override.month]),
           contract_id: override.contractId, project_id: override.projectId, month: override.month,
@@ -266,6 +266,14 @@ export function createRepository(db: Database): Repository {
         await tx.insertInto("hours_range_overrides").values(row)
           .onConflict((c) => c.column("id").doUpdateSet(row)).execute();
       });
+    },
+    async deleteHoursRangeOverride({ contractId, projectId, month }) {
+      assertDate(`${month}-01`);
+      let query = db.deleteFrom("hours_range_overrides")
+        .where("contract_id", "=", contractId).where("month", "=", month);
+      query = projectId === null ? query.where("project_id", "is", null) : query.where("project_id", "=", projectId);
+      const result = await query.executeTakeFirst();
+      return result.numDeletedRows > 0n;
     },
     async listHoursRangeOverrides(filter = {}) {
       let query = db.selectFrom("hours_range_overrides").selectAll();

@@ -33,12 +33,20 @@ describe("effectiveHoursRange: その月に効く目安時間(月ごとの上書
       effectiveHoursRange(
         range140to180,
         [
-          { month: "2026-11", range: {}, note: "" },
-          { month: "2026-11", range: {}, note: "" },
+          { month: "2026-11", range: { maxHours: 180 }, note: "" },
+          { month: "2026-11", range: { maxHours: 200 }, note: "" },
         ],
         "2026-11",
       ),
-    ).toThrow(RangeError);
+    ).toThrow("duplicate hours range override");
+  });
+
+  it("通常の契約は目安時間なしにできるが、上書きには下限か上限が必要", () => {
+    expect(effectiveHoursRange({}, [], "2026-11")).toEqual({});
+    expect(() => effectiveHoursRange({}, [{ month: "2026-11", range: {}, note: "" }], "2026-11"))
+      .toThrow("Override range must have minHours or maxHours");
+    expect(effectiveHoursRange({}, [{ month: "2026-11", range: { maxHours: 0 }, note: "" }], "2026-11"))
+      .toEqual({ maxHours: 0 });
   });
 });
 

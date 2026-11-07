@@ -88,7 +88,19 @@ export function createApi({ repo, app, auth }: ApiDeps) {
   });
   api.get("/api/hours-range-overrides", async (c) => {
     const month = c.req.query("month");
-    return c.json(await repo.listHoursRangeOverrides(month === undefined ? {} : { month: parseMonth(month) }));
+    const contractId = c.req.query("contractId");
+    return c.json(await repo.listHoursRangeOverrides({
+      ...(month === undefined ? {} : { month: parseMonth(month) }),
+      ...(contractId === undefined ? {} : { contractId }),
+    }));
+  });
+  api.delete("/api/hours-range-overrides", async (c) => {
+    const contractId = c.req.query("contractId");
+    if (!contractId) throw new RangeError("contractId is required");
+    const month = parseMonth(c.req.query("month"));
+    const projectId = c.req.query("projectId") ?? null;
+    const deleted = await repo.deleteHoursRangeOverride({ contractId, projectId, month });
+    return deleted ? c.json({ ok: true }) : c.json({ error: "hours range override not found" }, 404);
   });
 
   api.post("/api/sync/solidtime", async (c) => {

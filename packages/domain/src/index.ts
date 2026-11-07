@@ -9,7 +9,7 @@ export { contractCoverage, validateContracts, contractsForCurrentProjects } from
 export type { Contract, ContractCoverage } from "./contracts.ts";
 export { invoiceGuide } from "./invoice-guide.ts";
 export type { InvoiceGuideInput, InvoiceGuideProject, InvoiceGuideLine, InvoiceGuide } from "./invoice-guide.ts";
-export { effectiveHoursRange, hoursRangeWarnings } from "./hours-range.ts";
+export { assertHoursRangeOverride, effectiveHoursRange, hoursRangeWarnings } from "./hours-range.ts";
 export type { HoursRange, HoursRangeOverride, HoursRangeWarning } from "./hours-range.ts";
 export { weekdayAverages } from "./forecast/weekday-average.ts";
 export type { DailyWork } from "./forecast/weekday-average.ts";

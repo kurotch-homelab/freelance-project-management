@@ -217,6 +217,31 @@ describe.each(backends)("Repository (%s)", (_name, open) => {
         { contractId: "c1", projectId: null, month: "2026-12", range: { maxHours: 210 }, note: "再合意" },
       ]);
     });
+
+    it("指定した契約・月・対象だけを消し、未登録なら false を返す", async () => {
+      await repo.saveContract(contract1);
+      await repo.saveContract({ ...contract1, id: "c2", start: "2027-01-01", end: null });
+      const whole = { contractId: "c1", projectId: null, month: "2026-12", range: { maxHours: 200 }, note: "" };
+      const project = { ...whole, projectId: "Y", range: { minHours: 0, maxHours: 20.5 } };
+      const otherMonth = { ...whole, month: "2026-11" };
+      const otherContract = { ...whole, contractId: "c2" };
+      for (const row of [whole, project, otherMonth, otherContract]) await repo.saveHoursRangeOverride(row);
+      await expect(repo.listHoursRangeOverrides({ contractId: "c1", month: "2026-12" })).resolves.toEqual([whole, project]);
+      await expect(repo.deleteHoursRangeOverride(whole)).resolves.toBe(true);
+      await expect(repo.deleteHoursRangeOverride(whole)).resolves.toBe(false);
+      await expect(repo.listHoursRangeOverrides()).resolves.toEqual([otherMonth, project, otherContract]);
+      await expect(repo.deleteHoursRangeOverride(project)).resolves.toBe(true);
+      await expect(repo.listHoursRangeOverrides()).resolves.toEqual([otherMonth, otherContract]);
+    });
+
+    it("空の上書き範囲と不正な月の削除を拒否し、保存済みの上書きを保持する", async () => {
+      await repo.saveContract(contract1);
+      const override = { contractId: "c1", projectId: null, month: "2026-12", range: { maxHours: 0 }, note: "" };
+      await repo.saveHoursRangeOverride(override);
+      await expect(repo.saveHoursRangeOverride({ ...override, range: {} })).rejects.toThrow(RangeError);
+      await expect(repo.deleteHoursRangeOverride({ ...override, month: "2026-1" })).rejects.toThrow(RangeError);
+      await expect(repo.listHoursRangeOverrides()).resolves.toEqual([override]);
+    });
   });
 
   describe("稼働(solidtime から取り込んだ打刻)", () => {
