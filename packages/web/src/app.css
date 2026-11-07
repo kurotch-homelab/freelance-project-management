@@ -10,7 +10,7 @@ body { margin: 0; }
 }
 .app-header { background: var(--f-surface); border-bottom: 1px solid var(--f-border); }
 .app-header-inner { max-width: 1280px; margin: auto; padding: 16px 32px; display: flex; align-items: center; gap: 32px; }
-.app-name { font-size: 16px; font-weight: var(--f-weight-semibold); }
+.app-name { font-size: 20px; font-weight: var(--f-weight-semibold); }
 .app-navigation { display: flex; align-items: center; gap: 8px; flex: 1; }
 .app-navigation > a { padding: 8px 12px; border-radius: 4px; color: var(--f-muted); text-decoration: none; border-bottom: 2px solid transparent; }
 .app-navigation > a:hover { background: var(--f-surface-hover); }
