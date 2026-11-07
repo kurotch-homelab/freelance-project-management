@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM node:24-bookworm-slim AS manifests
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY .npmrc package.json package-lock.json ./
 COPY packages/api/package.json packages/api/package.json
 COPY packages/app/package.json packages/app/package.json
 COPY packages/auth/package.json packages/auth/package.json
@@ -11,11 +11,11 @@ COPY packages/google/package.json packages/google/package.json
 COPY packages/server/package.json packages/server/package.json
 COPY packages/solidtime/package.json packages/solidtime/package.json
 COPY packages/web/package.json packages/web/package.json
-# npm ci needs the local Forma package referenced by the web workspace.
-COPY packages/web/vendor/forma/*.tgz packages/web/vendor/forma/
+# @kurotch-homelab packages come from GitHub Packages, which needs a read:packages token even
+# for public packages. Pass a user .npmrc with the token as the build secret "npmrc".
 
 FROM manifests AS build
-RUN npm ci
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true npm ci
 COPY tsconfig*.json ./
 COPY packages/ packages/
 RUN npm run build --workspace=@fpm/web \
@@ -23,7 +23,7 @@ RUN npm run build --workspace=@fpm/web \
 
 FROM manifests AS production-dependencies
 # Only install the server workspace's production dependency tree.
-RUN npm ci --omit=dev --workspace=@fpm/server --include-workspace-root=false \
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true npm ci --omit=dev --workspace=@fpm/server --include-workspace-root=false \
     && rm -rf node_modules/@fpm
 # @fpm sources are bundled into dist/main.js; workspace symlinks are not needed.
 

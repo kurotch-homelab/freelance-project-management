@@ -17,8 +17,8 @@
     "vite": "^7.3.7"
   },
   "dependencies": {
+    "@kurotch-homelab/forma-react": "^0.1.2",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "@kurotch-homelab/forma-react": "file:vendor/forma/kurotch-homelab-forma-react-0.1.0.tgz"
+    "react-dom": "^19.3.1"
   }
 }

@@ -1,6 +1,9 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      secrets:
+        - npmrc
     image: fpm:local
     env_file:
       - .env
@@ -27,3 +30,8 @@ services:
 
 volumes:
   data:
+
+secrets:
+  # A user .npmrc with //npm.pkg.github.com/:_authToken=<token with read:packages>.
+  npmrc:
+    file: ${NPMRC_PATH:-${HOME}/.npmrc}

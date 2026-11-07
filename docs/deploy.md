@@ -10,6 +10,7 @@ API と Web は 1 つの Node.js プロセスで動く。Web のファイルは�
 - solidtime の URL、組織 ID、personal access token。トークンのユーザーには、対象組織の全員の打刻を読める権限が必要。admin か owner がおすすめだが、solidtime の manager でも読める。打刻はユーザーで絞らず、案件ごとに取り込む。権限が足りないと、同期は失敗として記録される。
 - Google のサービスアカウントと、そのアカウントに共有したカレンダー・共有ドライブ。
 - 32 文字以上のランダムな `SESSION_SECRET`。再起動のたびに変えず、同じ値を使う。
+- GitHub Packages を読めるトークン(`read:packages`)。デザインシステムの `@kurotch-homelab/forma-react` は GitHub Packages にあり、公開パッケージでもインストールに認証が要る。取得先はリポジトリ直下の `.npmrc` で指定してあるので、トークンは自分の `~/.npmrc` に `//npm.pkg.github.com/:_authToken=<トークン>` の形で書く。
 
 設定項目は [`.env.example`](../.env.example) にコメントつきで並べてある。空欄の秘密情報は利用環境で設定する。実際のトークン、パスワード、JSON キーはコミットしない。`.env.local` はこの手順では使わない。
 
@@ -59,8 +60,10 @@ SQLite は名前付きボリューム `data` の `/data/fpm.sqlite` に保存す
 イメージだけを作る場合は次のコマンドでよい。
 
 ```sh
-docker build -t fpm:local .
+docker build --secret id=npmrc,src="$HOME/.npmrc" -t fpm:local .
 ```
+
+ビルドの `npm ci` は、トークンを書いた `.npmrc` をビルドの secret として受け取る。secret はイメージのレイヤーに残らない。Compose は `NPMRC_PATH`(指定しなければ `~/.npmrc`)を同じ secret として渡す。
 
 Node.js 24 の Debian slim を使い、ビルド中に `node:sqlite` を実際に開けるか確認している。実行イメージにコピーするのはサーバーのビルド結果・package.json・本番依存と Web の dist だけ。ワークスペースの TypeScript はサーバーへバンドルするので、元のソースや開発ツールは不要になる。
 

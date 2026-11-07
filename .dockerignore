@@ -1,5 +1,6 @@
 # Send only build inputs. Environment files and credentials never enter the context.
 **
+!.npmrc
 !package.json
 !package-lock.json
 !tsconfig*.json
