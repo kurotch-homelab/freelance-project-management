@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 2,
+  "skill": "forma-design-system",
+  "snapshotId": "7dabe1c546c4fc9a4f86fd20c6f7ba95d3ea5699a7754143dbbc73cc203052aa",
+  "registry": "https://npm.pkg.github.com",
+  "mode": "react",
+  "fonts": "bundled",
+  "assetsDir": "public/forma",
+  "dependency": {
+    "name": "@kurotch-homelab/forma-react",
+    "spec": "0.1.2"
+  },
+  "status": "synced",
+  "files": {
+    "public/forma/LICENSE": "901f1c710adecbbebaad2c07dace412f0efb8f13222b694e107533d6a77a28ba",
+    "vendor/forma/LICENSE": "901f1c710adecbbebaad2c07dace412f0efb8f13222b694e107533d6a77a28ba",
+    "vendor/forma/THIRD_PARTY_NOTICES.md": "7d733d2542e2d53c6b04338e758a618482f8a3f00887bc1dea504186dfcca572",
+    "public/forma/fonts/IBMPlexSansJP-Medium.ttf": "1d09f5e25b19e54b2c55da70de58f9962512c3e07ed7c3e1c9bad77ace5c22e6",
+    "public/forma/fonts/IBMPlexSansJP-Regular.ttf": "372f8bba95f386856ae435dc0e69f08db1cac29bed513d99171a0ae2d307ba2a",
+    "public/forma/fonts/IBMPlexSansJP-SemiBold.ttf": "5985c29d2d5d444072915cf5874dc80e0a3f5fadbf14a9e3013a03a8fe6d7ff5",
+    "public/forma/fonts/OFL.txt": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
+    "public/forma/fonts/SOURCE.txt": "d3ea6241c027b726817891d20ceb543be29999377389dfdc3a3e6bbf400f3812",
+    "public/forma/fonts/fonts.css": "902eac5acc32f0fb8b5ea2fc7954ce1cb920faeca6274c72828e6b3b660525f9",
+    "vendor/forma/docs/DESIGN.md": "73cc6a3ca2f0cc0e43988140b7041f852019442f5509050e9b086862d184d9c9",
+    "vendor/forma/docs/HTML.md": "3a25396cc319f4cc92d2942b79f9c65890395c75837a524cf32a65b78092003a",
+    "vendor/forma/docs/INTEGRATION.md": "dbed3665c32c8516c96f1fb7b349e4363663814f95f4a77660046082b3ba77d6",
+    "vendor/forma/docs/REACT.md": "b455d2d0d7cb776b7d5b6c8204b8412fdea9a25beb7d445c547758610b882e79"
+  }
+}
