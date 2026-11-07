@@ -1,0 +1,32 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # GitHub Packages uses Dependabot's GITHUB_TOKEN with package Actions access.
+    # No PAT or registry secret is required.
+    groups:
+      forma:
+        patterns: ["@kurotch-homelab/*"]
+        update-types: [minor, patch]
+      dev:
+        dependency-type: development
+        exclude-patterns: ["@kurotch-homelab/*"]
+        update-types: [minor, patch]
+      prod:
+        dependency-type: production
+        exclude-patterns: ["@kurotch-homelab/*"]
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker-compose
+    directory: /e2e
+    schedule:
+      interval: weekly

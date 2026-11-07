@@ -264,3 +264,47 @@ Kubernetes では Deployment を 0 レプリカにし、Pod が終了して PVC 
 - SQLite の権限エラー: 既存のボリュームの所有者と StorageClass の `fsGroup` 対応を確認する。readOnlyRootFilesystem を解除する必要はない。
 
 実装の検証は `docker build`、コンテナへの HTTP アクセス、`kubectl kustomize`、`npx vitest run`、`npm run typecheck` で行う。ログイン・Google 同期・共有ドライブへのアップロードは、各サービスに実際の設定を入れたあとで確認する。
+
+## E2E とスクリーンショット
+
+Node.js 24、Docker Compose、インストール済みの npm 依存と Playwright の Chromium を使う。初回のイメージ取得・ビルドにはネットワーク接続が必要になる。通常の Docker ビルドと同じく、GitHub Packages 用の npm 設定を `NPMRC_PATH`（既定は `~/.npmrc`）で指定する。CI は `GITHUB_TOKEN` を BuildKit secret として渡す。
+
+```sh
+npm run e2e
+npm run screenshots
+```
+
+どちらも `e2e/compose.yaml` で本番用 Dockerfile のアプリ、mock-oauth2-server、偽の solidtime を起動し、終了時にコンテナと SQLite ボリュームを削除する。3000 と 8080 を localhost に公開するため、同じホストでは同時実行しない。ビルド済みのイメージを使う場合は `E2E_SKIP_BUILD=1 E2E_IMAGE=fpm:e2e npm run e2e` とする。設定はダミー値の `e2e/app.env` に限定し、開発用の環境変数ファイルは読み込まない。
+
+Playwright はホストで動かす。Chromium の名前解決で `oidc` を `127.0.0.1` に割り当て、コンテナでは Compose の DNS を使う。どちらも issuer は `http://oidc:8080/e2e` になり、discovery と ID トークンで URL が一致する。HTTP を許可する処理は E2E 専用の Node フックでこの issuer にだけ適用する。通常のログインフォーム、署名、issuer、audience、state、nonce、PKCE の検証はそのまま実行する。このフックは本番イメージには含めない。
+
+solidtime のデータは日本時間の実行日を基準に作る。2 社、3 案件、2 人の打刻を用意し、単価の違い、単価未設定、アーカイブした案件を確認する。請求設定、2 件の契約、月ごとの上書きは画面から保存する。Google の認証ファイルは空の JSON で、秘密鍵を含まない。起動直後のカレンダー同期は認証段階で失敗するため、画面には未更新の状態と認証エラーが出る。同期ボタンは押さず、Google API には接続しない。Compose のネットワークも外部への接続を禁止している。
+
+`flow.spec.ts` は毎回実行し、`screenshots.spec.ts` は `SCREENSHOT_DIR` があるときだけ撮影する。`npm run screenshots` の既定の保存先は `screenshots-out/current/`。5 画面を幅 1440 のライト・ダーク、幅 390 のライトで撮り、契約編集、月別上書き、モバイルメニューも含めて 22 枚を保存する。アニメーションを止め、同期日時をマスクする。失敗時の trace は `test-results/`、HTML レポートは `playwright-report/` に保存する。
+
+```sh
+SCREENSHOT_DIR=screenshots-out/before npm run screenshots
+SCREENSHOT_DIR=screenshots-out/after npm run screenshots
+node scripts/screenshots/compare.mjs screenshots-out/before screenshots-out/after screenshots-out/report
+```
+
+比較は pixelmatch の threshold 0.1 を使い、差が 1 ピクセル以上あれば変更として扱う。追加・削除・サイズ変更も掲載する。比較元がない場合は最初の引数を `-` にできる。PR では同じ基準日と head のテストを使い、base と head のイメージを別々の空の DB で撮影する。日付が変わった場合は再実行する。base のビルドや撮影ができなければ現在の画面だけを掲載し、head の失敗はジョブの失敗として扱う。
+
+同じリポジトリの PR では、変更のあった画像だけを `<!-- fpm-screenshots -->` 付きのコメントに掲載する。以前のコメントは削除し、変更がなければ削除のみ行う。画像は常に artifact にも保存し、`gh pr comment --attach` が使えない場合は artifact のリンクをコメントする。fork と Dependabot の PR は撮影対象外だが、通常の CI の E2E は Dependabot でも実行する。
+
+## Dependabot と Forma の更新
+
+Dependabot は npm、GitHub Actions、Dockerfile と E2E の Compose イメージを毎週確認する。npm の minor・patch 更新は Forma、開発依存、実行時依存にまとめ、major 更新は個別の PR にする。
+
+GitHub Packages の `forma-react`、`forma-styles`、`forma-tokens` それぞれの設定で、「Manage Actions access」にこのリポジトリを追加し、Read を付与する。Dependabot と Actions は `GITHUB_TOKEN` の `packages: read` を使うため、更新用の PAT は登録しない。権限設定と最初の Dependabot 実行結果はマージ後に確認する。
+
+Forma の更新をマージしたら依存をインストールし、`forma-design-system` スキルの `sync` を実行する。`<SKILL_DIR>` はスキルを配置したディレクトリに置き換える。
+
+```sh
+node "<SKILL_DIR>/scripts/forma.mjs" sync --target packages/web
+node "<SKILL_DIR>/scripts/forma.mjs" verify --target packages/web
+npm run typecheck
+npx vitest run
+```
+
+`packages/web/vendor/forma/installation.json` と同期で更新されたファイルを確認してコミットする。GitHub Actions の参照はコミット SHA で固定する。`actions/upload-artifact@v7` の `TODO pin` は、v7 系の最新リリースの SHA を確認して置き換える。
