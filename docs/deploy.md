@@ -290,9 +290,9 @@ node scripts/screenshots/compare.mjs screenshots-out/before screenshots-out/afte
 
 比較は pixelmatch の threshold 0.1 を使い、差が 1 ピクセル以上あれば変更として扱う。追加・削除・サイズ変更も掲載する。比較元がない場合は最初の引数を `-` にできる。PR では同じ基準日と head のテストを使い、base と head のイメージを別々の空の DB で撮影する。日付が変わった場合は再実行する。base のビルドや撮影ができなければ現在の画面だけを掲載し、head の失敗はジョブの失敗として扱う。
 
-同じリポジトリの PR では、変更のあった画像だけを `<!-- fpm-screenshots -->` 付きのコメントに掲載する。以前のコメントは削除し、変更がなければ削除のみ行う。画像は常に artifact にも保存する。
+同じリポジトリの PR では、変更のあった画面を `<!-- fpm-screenshots -->` 付きのコメントで知らせる。以前のコメントは削除し、変更がなければ削除のみ行う。画像は常に artifact にも保存する。
 
-コメントへの画像の添付は、ユーザーのトークンでないとできない(Actions の `GITHUB_TOKEN` は受け付けられない)。リポジトリの secret `SCREENSHOT_COMMENT_TOKEN` に、このリポジトリだけを対象にした fine-grained personal access token を入れる。権限は Contents と Pull requests の Read and write。コメントはトークンの持ち主の名前で投稿される。secret がないときや添付に失敗したときは、artifact のリンクをコメントする。fork と Dependabot の PR は撮影対象外だが、通常の CI の E2E は Dependabot でも実行する。
+コメントには変わった画面の一覧と artifact へのリンクを載せる。画像そのものは artifact からダウンロードして見る。コメントへの画像の添付はユーザーのトークンが必要で、Actions の `GITHUB_TOKEN` では添付できないため使っていない。fork と Dependabot の PR は撮影対象外だが、通常の CI の E2E は Dependabot でも実行する。
 
 ## Dependabot と Forma の更新
 

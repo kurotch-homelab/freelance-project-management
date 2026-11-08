@@ -113,9 +113,7 @@ jobs:
         if: steps.compare.outcome == 'success'
         run: node scripts/screenshots/comment.mjs screenshots-out/report
         env:
-          # A fine-grained PAT for this repository only (Contents: write,
-          # Pull requests: write). The image upload rejects GITHUB_TOKEN.
-          GH_TOKEN: ${{ secrets.SCREENSHOT_COMMENT_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
       - name: Remove the npm token
