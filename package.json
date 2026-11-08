@@ -8,11 +8,18 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -b && tsc -p tsconfig.tools.json"
+    "typecheck": "tsc -b && tsc -p tsconfig.tools.json",
+    "e2e": "node scripts/e2e/run.mjs",
+    "screenshots": "node scripts/e2e/run.mjs --screenshots"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@types/node": "^26.6.6",
+    "@types/pixelmatch": "^5.2.6",
+    "@types/pngjs": "^6.0.5",
     "msw": "^2.15.0",
+    "pixelmatch": "^8.0.0",
+    "pngjs": "^7.0.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
   }

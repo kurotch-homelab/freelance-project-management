@@ -1,0 +1,63 @@
+services:
+  app:
+    image: ${E2E_IMAGE:-fpm:e2e}
+    build:
+      context: ..
+      secrets:
+        - npmrc
+    env_file: app.env
+    environment:
+      NODE_OPTIONS: --import=/app/e2e/runtime/register.mjs
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - data:/data
+      - .:/app/e2e:ro
+    depends_on:
+      solidtime:
+        condition: service_healthy
+      oidc:
+        condition: service_started
+    # Discovery can race the JVM startup. The runner waits for app readiness.
+    restart: on-failure
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/readyz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 15s
+    stop_grace_period: 60s
+
+  oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:6.1.4
+    environment:
+      JSON_CONFIG: '{"interactiveLogin":true}'
+    ports:
+      - "127.0.0.1:8080:8080"
+    # Chromium maps oidc to 127.0.0.1; Docker DNS maps it to this service.
+    # Both use http://oidc:8080/e2e, including discovery, redirects and token iss.
+    # This avoids host-file edits and also works with Docker Desktop.
+
+  solidtime:
+    image: node:24-bookworm-slim
+    command: [node, /e2e/fake-solidtime/server.mjs]
+    environment:
+      E2E_TODAY: ${E2E_TODAY:?Set E2E_TODAY using scripts/e2e/run.mjs}
+    volumes:
+      - .:/e2e:ro
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  data:
+
+# The default network is not internal: Docker does not publish ports from an
+# internal network, and Playwright on the host needs app and oidc. Nothing calls
+# the Internet; Google credentials are {} and fail before any request.
+
+secrets:
+  npmrc:
+    file: ${NPMRC_PATH:-${HOME}/.npmrc}

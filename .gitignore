@@ -10,3 +10,6 @@ dist
 /deploy/kubernetes/overlays/local/
 # Local tool state
 .serena/
+screenshots-out/
+test-results/
+playwright-report/

@@ -1,0 +1,121 @@
+name: PR screenshots
+
+on:
+  pull_request:
+    paths:
+      - "packages/web/**"
+      - "packages/api/**"
+      - "packages/app/**"
+      - "package-lock.json"
+      - "e2e/**"
+      - "scripts/e2e/**"
+      - "scripts/screenshots/**"
+      - ".github/workflows/screenshots.yml"
+
+permissions:
+  contents: read
+  packages: read
+  pull-requests: write
+
+concurrency:
+  group: screenshots-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    if: github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      E2E_SKIP_BUILD: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@kurotch-homelab"
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npx playwright install --with-deps chromium
+      - name: Prepare base and the shared date
+        run: |
+          git worktree add --detach base "$BASE_SHA"
+          node --input-type=module -e "import { todayInTokyo } from './e2e/fake-solidtime/server.mjs'; console.log('E2E_TODAY=' + todayInTokyo())" >> "$GITHUB_ENV"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Write the npm token for the build secret
+        run: printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$RUNNER_TEMP/npmrc"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build head
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: fpm:screenshots-head
+          secret-files: npmrc=${{ runner.temp }}/npmrc
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build base
+        id: base-build
+        continue-on-error: true
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: base
+          load: true
+          tags: fpm:screenshots-base
+          secret-files: npmrc=${{ runner.temp }}/npmrc
+          cache-from: type=gha
+      - name: Capture base with the head test harness
+        if: steps.base-build.outcome == 'success'
+        run: |
+          if ! npm run screenshots; then
+            mkdir -p screenshots-out
+            rm -rf screenshots-out/before
+            if [ -d test-results ]; then mv test-results screenshots-out/base-test-results; fi
+            if [ -d playwright-report ]; then mv playwright-report screenshots-out/base-playwright-report; fi
+            echo '::warning::Base capture unavailable; showing head screenshots only'
+          fi
+        env:
+          E2E_IMAGE: fpm:screenshots-base
+          SCREENSHOT_DIR: screenshots-out/before
+          NPMRC_PATH: ${{ runner.temp }}/npmrc
+      - name: Capture head
+        run: npm run screenshots
+        env:
+          E2E_IMAGE: fpm:screenshots-head
+          SCREENSHOT_DIR: screenshots-out/after
+          NPMRC_PATH: ${{ runner.temp }}/npmrc
+      - name: Compare
+        id: compare
+        run: node scripts/screenshots/compare.mjs screenshots-out/before screenshots-out/after screenshots-out/report
+      - name: Upload screenshots and traces
+        id: artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-screenshots
+          path: |
+            screenshots-out/
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Replace the screenshot comment
+        if: steps.compare.outcome == 'success'
+        run: node scripts/screenshots/comment.mjs screenshots-out/report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+      - name: Remove the npm token
+        if: always()
+        run: rm -f "$RUNNER_TEMP/npmrc"
